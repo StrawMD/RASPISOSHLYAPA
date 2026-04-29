@@ -1,0 +1,194 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(cuid())
+  login        String   @unique
+  passwordHash String
+  role         String   @default("employee") // admin | schedule_manager | employee
+  employeeId   String?  @unique
+  employee     Employee? @relation(fields: [employeeId], references: [id])
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  scheduleEdits ScheduleEdit[]
+  createdVersions ScheduleVersion[] @relation("CreatedBy")
+}
+
+model Employee {
+  id                String   @id @default(cuid())
+  name              String   @unique
+  rate              Float    @default(1.0)
+  maxRate           Float    @default(1.5)
+  seniority         Int      @default(0)
+  hospitalStartYear Int?
+  careerStartYear   Int?
+  allowedPosts     String   @default("[]")
+  modalities       String   @default("[]")
+  can24h           Boolean  @default(false)
+  postPreferences  String   @default("{}")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  user            User?
+  preferences     Preference[]
+  availabilities  Availability[]
+  monthConfigs    EmployeeMonthConfig[]
+}
+
+model Post {
+  id                String  @id
+  name              String
+  shiftHours        Int     @default(12)
+  staffRequired     Int     @default(1)
+  staffRequiredDay  Int?
+  staffRequiredNight Int?
+  modality          String  @default("")
+  weekdayActive     Boolean @default(true)
+  weekendActive     Boolean @default(false)
+  activeWeekdays    String  @default("[]")
+  specificDays      String  @default("[]")
+  sortOrder         Int     @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  monthConfigs   MonthPostConfig[]
+}
+
+model Setting {
+  key   String @id
+  value String
+}
+
+model Holiday {
+  id   String @id @default(cuid())
+  date String
+  year Int
+
+  @@unique([date])
+  @@index([year])
+}
+
+model Month {
+  id        String   @id @default(cuid())
+  year      Int
+  month     Int
+  normHours Float
+  deadline  DateTime?
+  status    String   @default("collecting")
+
+  versions        ScheduleVersion[]
+  postConfigs     MonthPostConfig[]
+  employeeConfigs EmployeeMonthConfig[]
+  preferences     Preference[]
+  availabilities  Availability[]
+
+  @@unique([year, month])
+}
+
+model Preference {
+  id              String   @id @default(cuid())
+  employeeId      String
+  employee        Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  monthId         String
+  month           Month    @relation(fields: [monthId], references: [id], onDelete: Cascade)
+  pref24hFull     String?
+  pref24hDay      String?
+  pref24hNight    String?
+  postPriority    String   @default("[]")
+  postPreferences String   @default("{}")
+  unavailableDays String   @default("[]")
+  needsApproval   Boolean  @default(false)
+  weekdayPref     String?
+  weekendPref     String?
+  dayOfWeekPrefs  String   @default("{}")
+  desiredDates    String   @default("[]")
+  comment         String?
+  submittedAt     DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([employeeId, monthId])
+}
+
+model Availability {
+  id              String   @id @default(cuid())
+  employeeId      String
+  employee        Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  monthId         String
+  month           Month    @relation(fields: [monthId], references: [id], onDelete: Cascade)
+  unavailableDays String   @default("[]")
+  comment         String?
+  submittedAt     DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([employeeId, monthId])
+}
+
+model ScheduleVersion {
+  id             String   @id @default(cuid())
+  monthId        String
+  month          Month    @relation(fields: [monthId], references: [id], onDelete: Cascade)
+  versionNumber  Int
+  name           String?
+  status         String   @default("draft")
+  objectiveValue Float?
+  solverParams   String?
+  data           String   @default("{}")
+  employeeHours  String   @default("{}")
+  prevMonthTail  String?
+  createdById    String?
+  createdBy      User?    @relation("CreatedBy", fields: [createdById], references: [id])
+  createdAt      DateTime @default(now())
+
+  edits ScheduleEdit[]
+
+  @@unique([monthId, versionNumber])
+}
+
+model ScheduleEdit {
+  id        String   @id @default(cuid())
+  versionId String
+  version   ScheduleVersion @relation(fields: [versionId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  day       Int
+  postId    String
+  editType  String
+  oldValue  String?
+  newValue  String?
+  createdAt DateTime @default(now())
+
+  @@index([versionId])
+  @@index([userId])
+}
+
+model MonthPostConfig {
+  id         String @id @default(cuid())
+  monthId    String
+  month      Month  @relation(fields: [monthId], references: [id], onDelete: Cascade)
+  postId     String
+  post       Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  mode       String @default("default")
+  activeDays String @default("[]")
+  config     String @default("{}")
+
+  @@unique([monthId, postId])
+}
+
+model EmployeeMonthConfig {
+  id         String   @id @default(cuid())
+  monthId    String
+  month      Month    @relation(fields: [monthId], references: [id], onDelete: Cascade)
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  mode       String   @default("default")
+  config     String   @default("{}")
+
+  @@unique([monthId, employeeId])
+}

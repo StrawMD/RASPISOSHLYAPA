@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Source Sans Pro',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;padding:4px;background:transparent}
+.cal-wrap{max-width:290px}
+.cal-header{display:grid;grid-template-columns:repeat(7,1fr);gap:2px;margin-bottom:2px}
+.cal-header div{text-align:center;font-size:10px;font-weight:600;color:#888;padding:1px 0}
+.cal-header .wknd{color:#e57373}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:2px}
+.day{
+  aspect-ratio:1;display:flex;align-items:center;justify-content:center;
+  border-radius:5px;cursor:pointer;font-size:11px;font-weight:500;
+  transition:all .12s ease;border:2px solid transparent;
+  user-select:none;position:relative;
+}
+.day:hover:not(.empty){transform:scale(1.1);box-shadow:0 2px 6px rgba(0,0,0,.15);z-index:1}
+.day.empty{cursor:default;background:transparent}
+.day.default{background:#f0f2f6;color:#31333F}
+.day.weekend{background:#e4e6eb;color:#666}
+.day.selected{background:#42A5F5;color:#fff}
+.day.forced{background:#FF7043;color:#fff;font-weight:700}
+.day.vacation{background:#66BB6A;color:#fff}
+.day.sick{background:#EF5350;color:#fff}
+.day.hover-vacation{background:rgba(102,187,106,.30)}
+.day.hover-sick{background:rgba(239,83,80,.30)}
+.day.hover-days{background:rgba(66,165,245,.20)}
+.day.pending{border-color:#1565C0;animation:pulse 1.4s infinite}
+@keyframes pulse{
+  0%,100%{box-shadow:0 0 0 0 rgba(21,101,192,.4)}
+  50%{box-shadow:0 0 0 4px rgba(21,101,192,0)}
+}
+.hint{font-size:10px;color:#999;text-align:center;margin-top:4px;min-height:14px;line-height:1.3}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const Streamlit={
+  setComponentReady(){window.parent.postMessage({isStreamlitMessage:true,type:"streamlit:componentReady",apiVersion:1},"*")},
+  setComponentValue(v){window.parent.postMessage({isStreamlitMessage:true,type:"streamlit:setComponentValue",value:v},"*")},
+  setFrameHeight(h){window.parent.postMessage({isStreamlitMessage:true,type:"streamlit:setFrameHeight",height:h||document.documentElement.scrollHeight},"*")}
+};
+window.addEventListener("message",e=>{if(e.data.type==="streamlit:render")onRender(e.data)});
+
+let S={year:2026,month:6,mode:"range",ranges:[],selectType:"vacation",
+       pendingStart:null,hoverDay:null,selectedDays:new Set(),forcedDays:new Set()};
+let cells={},clickTimers={},lastBuildKey=null,lastSent=null,skipNextArgs=false;
+
+function onRender(data){
+  const a=data.args||{};
+  S.year=a.year||2026; S.month=a.month||6;
+  S.mode=a.mode||"range"; S.selectType=a.selectType||"vacation";
+  const bk=S.year+"-"+S.month+"-"+S.mode;
+  if(bk!==lastBuildKey){buildCalendar();lastBuildKey=bk;S.pendingStart=null;S.hoverDay=null;lastSent=null;skipNextArgs=false}
+  const skip=skipNextArgs;
+  if(skip) skipNextArgs=false;
+  if(!skip){
+    if(S.mode==="range"){
+      const incoming=JSON.stringify(a.ranges||[]);
+      if(lastSent===null||incoming!==JSON.stringify(lastSent.ranges||[]))
+        S.ranges=JSON.parse(JSON.stringify(a.ranges||[]));
+    }else if(S.mode==="toggle"){
+      const inD=JSON.stringify((a.selectedDays||[]).slice().sort((x,y)=>x-y));
+      if(lastSent===null||inD!==JSON.stringify(lastSent.selectedDays||[])){
+        S.selectedDays=new Set(a.selectedDays||[]); S.forcedDays=new Set();
+      }
+    }else{
+      const inD=JSON.stringify((a.selectedDays||[]).slice().sort((x,y)=>x-y));
+      const inF=JSON.stringify((a.forcedDays||[]).slice().sort((x,y)=>x-y));
+      if(lastSent===null||inD!==JSON.stringify(lastSent.selectedDays||[])||inF!==JSON.stringify(lastSent.forcedDays||[])){
+        S.selectedDays=new Set(a.selectedDays||[]); S.forcedDays=new Set(a.forcedDays||[]);
+      }
+    }
+  }
+  renderGrid();
+  requestAnimationFrame(()=>Streamlit.setFrameHeight());
+}
+
+function buildCalendar(){
+  const root=document.getElementById("root"); root.innerHTML="";
+  const wrap=document.createElement("div");wrap.className="cal-wrap";
+  const hdr=document.createElement("div");hdr.className="cal-header";
+  ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"].forEach((n,i)=>{
+    const d=document.createElement("div");d.textContent=n;if(i>=5)d.className="wknd";hdr.appendChild(d);
+  });
+  wrap.appendChild(hdr);
+  const grid=document.createElement("div");grid.className="cal-grid";
+  const dim=new Date(S.year,S.month,0).getDate();
+  const firstDow=(new Date(S.year,S.month-1,1).getDay()+6)%7;
+  cells={};
+  for(let i=0;i<firstDow;i++){const c=document.createElement("div");c.className="day empty";grid.appendChild(c)}
+  for(let d=1;d<=dim;d++){
+    const c=document.createElement("div");c.className="day";c.textContent=d;c.dataset.day=d;
+    const dd=d;
+    c.addEventListener("click",()=>onDayClick(dd));
+    c.addEventListener("mouseenter",()=>onDayHover(dd));
+    c.addEventListener("mouseleave",()=>onDayOut());
+    cells[d]=c;grid.appendChild(c);
+  }
+  const total=firstDow+dim,rem=total%7;
+  if(rem>0)for(let i=0;i<7-rem;i++){const c=document.createElement("div");c.className="day empty";grid.appendChild(c)}
+  wrap.appendChild(grid);
+  const hint=document.createElement("div");hint.className="hint";hint.id="hint";wrap.appendChild(hint);
+  root.appendChild(wrap);
+}
+
+function renderGrid(){
+  const dim=new Date(S.year,S.month,0).getDate();
+  for(let d=1;d<=dim;d++){
+    const c=cells[d]; if(!c)continue;
+    const dow=(new Date(S.year,S.month-1,d).getDay()+6)%7, isWe=dow>=5;
+    c.className="day";
+    if(S.mode==="range"){
+      let inR=null;
+      for(const r of S.ranges)if(d>=r.start&&d<=r.end){inR=r.type;break}
+      if(inR){c.classList.add(inR)}
+      else if(d===S.pendingStart){c.classList.add(isWe?"weekend":"default");c.classList.add("pending")}
+      else if(S.pendingStart!==null&&S.hoverDay!==null){
+        const lo=Math.min(S.pendingStart,S.hoverDay),hi=Math.max(S.pendingStart,S.hoverDay);
+        if(d>=lo&&d<=hi)c.classList.add("hover-"+S.selectType);
+        else c.classList.add(isWe?"weekend":"default");
+      }else c.classList.add(isWe?"weekend":"default");
+    }else{
+      if(S.forcedDays.has(d))c.classList.add("forced");
+      else if(S.selectedDays.has(d))c.classList.add("selected");
+      else c.classList.add(isWe?"weekend":"default");
+    }
+  }
+  const h=document.getElementById("hint");
+  if(h){
+    if(S.mode==="range") h.textContent=S.pendingStart!==null?"Выберите дату окончания периода":"Нажмите на начальную дату периода";
+    else if(S.mode==="toggle") h.textContent="";
+    else h.textContent="Клик — возможная дата  ·  Двойной клик — фиксированная";
+  }
+}
+
+function onDayClick(day){if(S.mode==="range")rangeClick(day);else if(S.mode==="toggle")toggleClick(day);else daysClick(day)}
+function toggleClick(day){
+  if(S.selectedDays.has(day))S.selectedDays.delete(day);else S.selectedDays.add(day);
+  sendDays();renderGrid();
+}
+function onDayHover(day){S.hoverDay=day;if(S.mode==="range"&&S.pendingStart!==null)renderGrid()}
+function onDayOut(){S.hoverDay=null;if(S.mode==="range"&&S.pendingStart!==null)renderGrid()}
+
+function rangeClick(day){
+  if(S.pendingStart!==null){
+    if(S.pendingStart===day){S.pendingStart=null;S.hoverDay=null;renderGrid();return}
+    const lo=Math.min(S.pendingStart,day),hi=Math.max(S.pendingStart,day);
+    addRange(lo,hi,S.selectType);mergeAdj();
+    S.pendingStart=null;S.hoverDay=null;sendRanges();renderGrid();return;
+  }
+  const ri=S.ranges.findIndex(r=>day>=r.start&&day<=r.end);
+  if(ri>=0){
+    const r=S.ranges[ri];
+    if(day===r.start&&day===r.end)S.ranges.splice(ri,1);
+    else if(day===r.start)r.start=day+1;
+    else if(day===r.end)r.end=day-1;
+    else{S.pendingStart=day;renderGrid();return}
+    sendRanges();renderGrid();
+  }else{S.pendingStart=day;renderGrid()}
+}
+function addRange(s,e,t){
+  const nr=[];
+  for(const r of S.ranges){
+    if(r.end<s||r.start>e){nr.push(r);continue}
+    if(r.start<s)nr.push({start:r.start,end:s-1,type:r.type});
+    if(r.end>e)nr.push({start:e+1,end:r.end,type:r.type});
+  }
+  nr.push({start:s,end:e,type:t});nr.sort((a,b)=>a.start-b.start);S.ranges=nr;
+}
+function mergeAdj(){
+  if(S.ranges.length<2)return;
+  const m=[S.ranges[0]];
+  for(let i=1;i<S.ranges.length;i++){
+    const p=m[m.length-1],c=S.ranges[i];
+    if(c.type===p.type&&c.start<=p.end+1)p.end=Math.max(p.end,c.end);
+    else m.push(c);
+  }
+  S.ranges=m;
+}
+function sendRanges(){const v={ranges:S.ranges.map(r=>({...r}))};lastSent=v;skipNextArgs=true;Streamlit.setComponentValue(v)}
+
+function daysClick(day){
+  if(clickTimers[day]){clearTimeout(clickTimers[day]);delete clickTimers[day];dblClick(day)}
+  else clickTimers[day]=setTimeout(()=>{delete clickTimers[day];sglClick(day)},280);
+}
+function sglClick(day){
+  if(S.forcedDays.has(day)){S.forcedDays.delete(day)}
+  else if(S.selectedDays.has(day)){S.selectedDays.delete(day)}
+  else S.selectedDays.add(day);
+  sendDays();renderGrid();
+}
+function dblClick(day){
+  if(S.forcedDays.has(day)){S.forcedDays.delete(day);S.selectedDays.delete(day)}
+  else{S.selectedDays.add(day);S.forcedDays.add(day)}
+  sendDays();renderGrid();
+}
+function sendDays(){
+  const v={selectedDays:[...S.selectedDays].sort((a,b)=>a-b),forcedDays:[...S.forcedDays].sort((a,b)=>a-b)};
+  lastSent=v;skipNextArgs=true;Streamlit.setComponentValue(v);
+}
+
+Streamlit.setComponentReady();
+Streamlit.setFrameHeight(50);
+</script>
+</body>
+</html>

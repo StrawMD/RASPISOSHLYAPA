@@ -1,0 +1,90 @@
+[
+  {
+    "id": "ssk1",
+    "name": "ССК1 Приёмник",
+    "shift_hours": 24,
+    "staff_required": 2,
+    "weekday_active": true,
+    "weekend_active": true
+  },
+  {
+    "id": "kt_pb",
+    "name": "КТ пищеблок",
+    "shift_hours": 24,
+    "staff_required": 1,
+    "weekday_active": true,
+    "weekend_active": true
+  },
+  {
+    "id": "mrt_ssk",
+    "name": "МРТ ССК",
+    "shift_hours": 12,
+    "staff_required": 1,
+    "weekday_active": true,
+    "weekend_active": false
+  },
+  {
+    "id": "kt_ssk2",
+    "name": "КТ ССК2",
+    "shift_hours": 12,
+    "staff_required": 2,
+    "weekday_active": true,
+    "weekend_active": false
+  },
+  {
+    "id": "ge_siemens",
+    "name": "GE / Siemens (ЦАОП)",
+    "shift_hours": 12,
+    "staff_required": 1,
+    "weekday_active": true,
+    "weekend_active": false
+  },
+  {
+    "id": "kt_2011",
+    "name": "КТ 2011",
+    "shift_hours": 12,
+    "staff_required": 2,
+    "weekday_active": true,
+    "weekend_active": true
+  },
+  {
+    "id": "kt_2013",
+    "name": "КТ 2013",
+    "shift_hours": 12,
+    "staff_required": 1,
+    "weekday_active": true,
+    "weekend_active": false
+  },
+  {
+    "id": "toshiba",
+    "name": "Тошиба 1 корп",
+    "shift_hours": 12,
+    "staff_required": 1,
+    "weekday_active": false,
+    "weekend_active": false
+  },
+  {
+    "id": "kt_4str",
+    "name": "КТ 4стр",
+    "shift_hours": 12,
+    "staff_required": 2,
+    "weekday_active": true,
+    "weekend_active": false
+  },
+  {
+    "id": "mrt_22_1",
+    "name": "МРТ 22-1 эт",
+    "shift_hours": 12,
+    "staff_required": 1,
+    "weekday_active": true,
+    "weekend_active": true
+  },
+  {
+    "id": "mrt_21_1",
+    "name": "МРТ 21-1 (3Т)",
+    "shift_hours": 12,
+    "staff_required": 1,
+    "weekday_active": true,
+    "weekend_active": true
+  }
+]

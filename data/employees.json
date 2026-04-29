@@ -1,0 +1,784 @@
+[
+  {
+    "name": "Федорова",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_2011"
+    ],
+    "post_preferences": [
+      "kt_2011"
+    ]
+  },
+  {
+    "name": "Хорова",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_2011"
+    ],
+    "post_preferences": [
+      "kt_2011"
+    ]
+  },
+  {
+    "name": "Шейх",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_4str"
+    ],
+    "post_preferences": [
+      "kt_4str"
+    ]
+  },
+  {
+    "name": "Байтаева",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_4str",
+      "kt_ssk2",
+      "kt_2011"
+    ],
+    "post_preferences": [
+      "kt_4str",
+      "kt_ssk2",
+      "kt_2011"
+    ]
+  },
+  {
+    "name": "Череватенко",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_ssk2",
+      "kt_4str",
+      "kt_2011"
+    ],
+    "post_preferences": [
+      "kt_ssk2",
+      "kt_4str",
+      "kt_2011"
+    ]
+  },
+  {
+    "name": "Шокирова",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_ssk2",
+      "kt_2011",
+      "kt_4str"
+    ],
+    "post_preferences": [
+      "kt_ssk2",
+      "kt_2011",
+      "kt_4str"
+    ]
+  },
+  {
+    "name": "Борзунова",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_2013",
+      "kt_ssk2",
+      "kt_2011",
+      "ge_siemens"
+    ],
+    "post_preferences": [
+      "kt_2013",
+      "kt_ssk2",
+      "kt_2011",
+      "ge_siemens"
+    ]
+  },
+  {
+    "name": "Смирнова",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_4str",
+      "kt_2011"
+    ],
+    "post_preferences": [
+      "kt_4str",
+      "kt_2011"
+    ]
+  },
+  {
+    "name": "Седова",
+    "rate": 0.5,
+    "max_rate": 0.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_4str",
+      "kt_2013"
+    ],
+    "post_preferences": [
+      "kt_4str",
+      "kt_2013"
+    ]
+  },
+  {
+    "name": "Федотов",
+    "rate": 0.5,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_2011",
+      "kt_ssk2",
+      "kt_4str"
+    ],
+    "post_preferences": [
+      "kt_2011",
+      "kt_ssk2",
+      "kt_4str"
+    ]
+  },
+  {
+    "name": "Егиян",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": true,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_4str",
+      "kt_ssk2",
+      "kt_2011",
+      "ssk1",
+      "kt_2013"
+    ],
+    "post_preferences": [
+      "kt_4str",
+      "kt_ssk2",
+      "kt_2011",
+      "ssk1",
+      "kt_2013"
+    ]
+  },
+  {
+    "name": "Сланская",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "ge_siemens",
+      "kt_2011",
+      "kt_ssk2",
+      "kt_2013",
+      "ssk1"
+    ],
+    "post_preferences": [
+      "ge_siemens",
+      "kt_2011",
+      "kt_ssk2",
+      "kt_2013",
+      "ssk1"
+    ]
+  },
+  {
+    "name": "Лисина",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_2013",
+      "ge_siemens",
+      "kt_ssk2",
+      "kt_4str",
+      "kt_2011",
+      "ssk1"
+    ],
+    "post_preferences": [
+      "kt_2013",
+      "ge_siemens",
+      "kt_ssk2",
+      "kt_4str",
+      "kt_2011",
+      "ssk1"
+    ]
+  },
+  {
+    "name": "Знатнова",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_ssk2",
+      "ge_siemens",
+      "kt_pb",
+      "kt_2013",
+      "kt_2011",
+      "ssk1"
+    ],
+    "post_preferences": [
+      "kt_ssk2",
+      "ge_siemens",
+      "kt_pb",
+      "kt_2013",
+      "kt_2011",
+      "ssk1"
+    ]
+  },
+  {
+    "name": "Кузахметова",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_4str",
+      "kt_ssk2",
+      "ssk1",
+      "kt_2011",
+      "kt_2013"
+    ],
+    "post_preferences": [
+      "kt_4str",
+      "kt_ssk2",
+      "ssk1",
+      "kt_2011",
+      "kt_2013"
+    ]
+  },
+  {
+    "name": "Костарев",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "ssk1",
+      "kt_4str",
+      "kt_2013",
+      "kt_ssk2",
+      "ge_siemens",
+      "kt_2011"
+    ],
+    "post_preferences": [
+      "ssk1",
+      "kt_4str",
+      "kt_2013",
+      "kt_ssk2",
+      "ge_siemens",
+      "kt_2011"
+    ]
+  },
+  {
+    "name": "Гаджиева",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_ssk2",
+      "kt_2011",
+      "ssk1",
+      "kt_pb"
+    ],
+    "post_preferences": [
+      "kt_ssk2",
+      "kt_2011",
+      "ssk1",
+      "kt_pb"
+    ]
+  },
+  {
+    "name": "Муравьева",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": true,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "ssk1",
+      "kt_2011",
+      "kt_2013",
+      "kt_pb",
+      "kt_ssk2"
+    ],
+    "post_preferences": [
+      "ssk1",
+      "kt_2011",
+      "kt_2013",
+      "kt_pb",
+      "kt_ssk2"
+    ]
+  },
+  {
+    "name": "Буславская",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "ge_siemens",
+      "ssk1",
+      "kt_2013",
+      "kt_pb"
+    ],
+    "post_preferences": [
+      "ge_siemens",
+      "ssk1",
+      "kt_2013",
+      "kt_pb"
+    ]
+  },
+  {
+    "name": "Китова",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "ssk1",
+      "kt_pb",
+      "kt_2013",
+      "kt_4str"
+    ],
+    "post_preferences": [
+      "ssk1",
+      "kt_pb",
+      "kt_2013",
+      "kt_4str"
+    ]
+  },
+  {
+    "name": "Слепов",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "ssk1",
+      "kt_pb",
+      "kt_2013"
+    ],
+    "post_preferences": [
+      "ssk1",
+      "kt_pb",
+      "kt_2013"
+    ]
+  },
+  {
+    "name": "Сорокин",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "ssk1",
+      "kt_pb",
+      "kt_2013"
+    ],
+    "post_preferences": [
+      "ssk1",
+      "kt_pb",
+      "kt_2013"
+    ]
+  },
+  {
+    "name": "Осипов",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "ssk1",
+      "kt_pb",
+      "kt_2013"
+    ],
+    "post_preferences": [
+      "ssk1",
+      "kt_pb",
+      "kt_2013"
+    ]
+  },
+  {
+    "name": "Курзанцева",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_pb",
+      "ssk1"
+    ],
+    "post_preferences": [
+      "kt_pb",
+      "ssk1"
+    ]
+  },
+  {
+    "name": "Дохтова",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_pb",
+      "ssk1"
+    ],
+    "post_preferences": [
+      "kt_pb",
+      "ssk1"
+    ]
+  },
+  {
+    "name": "Саломахина",
+    "rate": 1.0,
+    "max_rate": 1.0,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_pb",
+      "ssk1"
+    ],
+    "post_preferences": [
+      "kt_pb",
+      "ssk1"
+    ]
+  },
+  {
+    "name": "Гурова",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_pb"
+    ],
+    "post_preferences": [
+      "kt_pb"
+    ]
+  },
+  {
+    "name": "Корнилов",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_pb",
+      "ssk1"
+    ],
+    "post_preferences": [
+      "kt_pb",
+      "ssk1"
+    ]
+  },
+  {
+    "name": "Мышкин",
+    "rate": 0.5,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "ssk1",
+      "kt_pb"
+    ],
+    "post_preferences": [
+      "ssk1",
+      "kt_pb"
+    ]
+  },
+  {
+    "name": "Ким",
+    "rate": 0.5,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "ssk1",
+      "kt_pb"
+    ],
+    "post_preferences": [
+      "ssk1",
+      "kt_pb"
+    ]
+  },
+  {
+    "name": "Серебрякова",
+    "rate": 0.5,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_pb"
+    ],
+    "post_preferences": [
+      "kt_pb"
+    ]
+  },
+  {
+    "name": "Иванов",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "ssk1",
+      "mrt_21_1",
+      "mrt_ssk",
+      "kt_2011",
+      "kt_pb",
+      "kt_2013",
+      "mrt_22_1"
+    ],
+    "post_preferences": [
+      "ssk1",
+      "mrt_21_1",
+      "mrt_ssk",
+      "kt_2011",
+      "kt_pb",
+      "kt_2013",
+      "mrt_22_1"
+    ]
+  },
+  {
+    "name": "Баратов",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "mrt_ssk",
+      "ssk1",
+      "kt_pb",
+      "kt_2013"
+    ],
+    "post_preferences": [
+      "mrt_ssk",
+      "ssk1",
+      "kt_pb",
+      "kt_2013"
+    ]
+  },
+  {
+    "name": "Румер",
+    "rate": 1.0,
+    "max_rate": 2.0,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_pb",
+      "ge_siemens",
+      "ssk1",
+      "mrt_ssk",
+      "mrt_21_1",
+      "kt_2013"
+    ],
+    "post_preferences": [
+      "kt_pb",
+      "ge_siemens",
+      "ssk1",
+      "mrt_ssk",
+      "mrt_21_1",
+      "kt_2013"
+    ]
+  },
+  {
+    "name": "Карабаева",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_2011",
+      "kt_ssk2",
+      "ge_siemens",
+      "mrt_22_1",
+      "mrt_ssk",
+      "kt_4str",
+      "mrt_21_1"
+    ],
+    "post_preferences": [
+      "kt_2011",
+      "kt_ssk2",
+      "ge_siemens",
+      "mrt_22_1",
+      "mrt_ssk",
+      "kt_4str",
+      "mrt_21_1"
+    ]
+  },
+  {
+    "name": "Соломка",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "mrt_21_1",
+      "mrt_ssk",
+      "kt_2013",
+      "kt_2011",
+      "mrt_22_1",
+      "kt_ssk2"
+    ],
+    "post_preferences": [
+      "mrt_21_1",
+      "mrt_ssk",
+      "kt_2013",
+      "kt_2011",
+      "mrt_22_1",
+      "kt_ssk2"
+    ]
+  },
+  {
+    "name": "Чураянц",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "mrt_22_1"
+    ],
+    "post_preferences": [
+      "mrt_22_1"
+    ]
+  },
+  {
+    "name": "Василенко",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "mrt_22_1",
+      "mrt_21_1"
+    ],
+    "post_preferences": [
+      "mrt_22_1",
+      "mrt_21_1"
+    ]
+  },
+  {
+    "name": "Мхитарян",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "mrt_21_1",
+      "mrt_22_1",
+      "mrt_ssk"
+    ],
+    "post_preferences": [
+      "mrt_21_1",
+      "mrt_22_1",
+      "mrt_ssk"
+    ]
+  },
+  {
+    "name": "Гончарук",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "mrt_21_1",
+      "mrt_ssk",
+      "mrt_22_1"
+    ],
+    "post_preferences": [
+      "mrt_21_1",
+      "mrt_ssk",
+      "mrt_22_1"
+    ]
+  },
+  {
+    "name": "Магомедов",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "mrt_21_1",
+      "mrt_ssk",
+      "mrt_22_1"
+    ],
+    "post_preferences": [
+      "mrt_21_1",
+      "mrt_ssk",
+      "mrt_22_1"
+    ]
+  },
+  {
+    "name": "Кучук",
+    "rate": 0.5,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "mrt_21_1"
+    ],
+    "post_preferences": [
+      "mrt_21_1"
+    ]
+  }
+]
