@@ -177,7 +177,7 @@ export function VacationManager({ employees, vacationMap, year, month }: Props) 
   }, [employees, activeIds]);
 
   const addEmployee = useCallback(
-    (id: string) => {
+    (id: string | null | undefined) => {
       if (!id) return;
       setActiveIds((prev) => (prev.includes(id) ? prev : [...prev, id]));
       setAddValue("");
