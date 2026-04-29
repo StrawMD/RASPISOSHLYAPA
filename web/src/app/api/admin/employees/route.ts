@@ -41,11 +41,16 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
+  const rate = body.rate ?? 1.0;
+  const maxRate = body.maxRate ?? 1.5;
+  const rawTarget = body.targetRate ?? rate;
+  const targetRate = Math.min(Math.max(rawTarget, rate), maxRate);
   const employee = await prisma.employee.create({
     data: {
       name: body.name,
-      rate: body.rate ?? 1.0,
-      maxRate: body.maxRate ?? 1.5,
+      rate,
+      targetRate,
+      maxRate,
       seniority: body.seniority ?? 0,
       hospitalStartYear: body.hospitalStartYear ?? null,
       careerStartYear: body.careerStartYear ?? null,
@@ -70,12 +75,17 @@ export async function PUT(req: NextRequest) {
   }
 
   const body = await req.json();
+  const rate = body.rate;
+  const maxRate = body.maxRate;
+  const rawTarget = body.targetRate ?? rate;
+  const targetRate = Math.min(Math.max(rawTarget, rate), maxRate);
   const employee = await prisma.employee.update({
     where: { id: body.id },
     data: {
       name: body.name,
-      rate: body.rate,
-      maxRate: body.maxRate,
+      rate,
+      targetRate,
+      maxRate,
       seniority: body.seniority ?? 0,
       hospitalStartYear: body.hospitalStartYear ?? null,
       careerStartYear: body.careerStartYear ?? null,

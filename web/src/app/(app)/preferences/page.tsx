@@ -26,9 +26,9 @@ export default async function PreferencesPage() {
 
   const posts = await prisma.post.findMany({ orderBy: { sortOrder: "asc" } });
   const modalities: string[] = safeJson(employee.modalities, []);
-  const modSet = new Set(modalities);
-  const myPosts = posts.filter((p) => p.modality && modSet.has(p.modality));
-  const has24h = employee.can24h && myPosts.some((p) => p.shiftHours === 24);
+  const has24hPostsInSystem = posts.some(
+    (p) => p.shiftHours === 24 && p.modality === "КТ",
+  );
 
   const now = new Date();
   const nextMonth = now.getMonth() + 2 > 12
@@ -53,11 +53,25 @@ export default async function PreferencesPage() {
   return (
     <div className="container mx-auto p-4 md:p-6">
       <PreferencesForm
+        key={`${employee.id}-${employee.updatedAt.toISOString()}-${existing?.updatedAt?.toISOString() ?? "nopref"}`}
         employeeId={employee.id}
         employeeName={employee.name}
-        employeeRate={employee.rate}
-        posts={myPosts.map((p) => ({ id: p.id, name: p.name, shiftHours: p.shiftHours }))}
-        has24h={has24h}
+        employee={{
+          rate: employee.rate,
+          targetRate: employee.targetRate,
+          maxRate: employee.maxRate,
+          modalities,
+          can24h: employee.can24h,
+          hospitalStartYear: employee.hospitalStartYear,
+          careerStartYear: employee.careerStartYear,
+        }}
+        posts={posts.map((p) => ({
+          id: p.id,
+          name: p.name,
+          shiftHours: p.shiftHours,
+          modality: p.modality ?? "",
+        }))}
+        has24hPostsInSystem={has24hPostsInSystem}
         year={nextMonth.year}
         month={nextMonth.month}
         monthId={month?.id ?? null}
@@ -69,6 +83,7 @@ export default async function PreferencesPage() {
                 pref24hFull: existing.pref24hFull,
                 pref24hDay: existing.pref24hDay,
                 pref24hNight: existing.pref24hNight,
+                shiftTimeMode: existing.shiftTimeMode,
                 postPreferences: safeJson(existing.postPreferences, {}),
                 unavailableDays: safeJson(existing.unavailableDays, []),
                 weekdayPref: existing.weekdayPref,

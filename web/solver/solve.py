@@ -65,6 +65,7 @@ def main():
 
     post_prefs = input_data.get("postPreferences", {})
     shift_prefs = input_data.get("shiftPreferences", {})
+    shift_time_modes = input_data.get("shiftTimeModes", {})
     seniority_filter = input_data.get("seniorityFilter", False)
     time_limit = input_data.get("timeLimit", 120)
     weekday_prefs = input_data.get("weekdayPrefs", {})
@@ -76,6 +77,7 @@ def main():
         posts, employees, config,
         post_preferences=post_prefs,
         shift_preferences=shift_prefs,
+        shift_time_modes=shift_time_modes,
         seniority_filter=seniority_filter,
         weekday_prefs=weekday_prefs,
         weekend_prefs=weekend_prefs,

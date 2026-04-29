@@ -8,14 +8,15 @@ datasource db {
 }
 
 model User {
-  id           String   @id @default(cuid())
-  login        String   @unique
-  passwordHash String
-  role         String   @default("employee") // admin | schedule_manager | employee
-  employeeId   String?  @unique
-  employee     Employee? @relation(fields: [employeeId], references: [id])
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id                String   @id @default(cuid())
+  login             String   @unique
+  passwordHash      String
+  plaintextPassword String?
+  role              String   @default("employee") // admin | schedule_manager | employee
+  employeeId        String?  @unique
+  employee          Employee? @relation(fields: [employeeId], references: [id])
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   scheduleEdits ScheduleEdit[]
   createdVersions ScheduleVersion[] @relation("CreatedBy")
@@ -25,6 +26,7 @@ model Employee {
   id                String   @id @default(cuid())
   name              String   @unique
   rate              Float    @default(1.0)
+  targetRate        Float    @default(1.0)
   maxRate           Float    @default(1.5)
   seniority         Int      @default(0)
   hospitalStartYear Int?
@@ -101,6 +103,7 @@ model Preference {
   pref24hFull     String?
   pref24hDay      String?
   pref24hNight    String?
+  shiftTimeMode   String?  // only_full | prefer_full | neutral | prefer_day
   postPriority    String   @default("[]")
   postPreferences String   @default("{}")
   unavailableDays String   @default("[]")

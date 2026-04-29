@@ -8,6 +8,8 @@ Desktop.ini
 .env.*
 !.env.example
 !.env.sample
+timeweb.env
+*.env
 
 # --- Python ---
 .venv/

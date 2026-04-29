@@ -27,10 +27,21 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const {
     employeeId, year, month,
-    pref24hFull, pref24hDay, pref24hNight,
+    pref24hFull, pref24hDay, pref24hNight, shiftTimeMode,
     postPreferences, unavailableDays, weekdayPref, weekendPref,
     dayOfWeekPrefs, desiredDates, comment,
   } = body;
+
+  const ALLOWED_MODES = new Set([
+    "only_full",
+    "prefer_full",
+    "neutral",
+    "prefer_day",
+  ]);
+  const normalizedShiftTimeMode =
+    typeof shiftTimeMode === "string" && ALLOWED_MODES.has(shiftTimeMode)
+      ? shiftTimeMode
+      : null;
 
   const isAdmin = ["admin", "schedule_manager"].includes(session.user.role);
   if (!isAdmin && session.user.employeeId !== employeeId) {
@@ -84,6 +95,7 @@ export async function POST(req: NextRequest) {
       pref24hFull: pref24hFull ?? null,
       pref24hDay: pref24hDay ?? null,
       pref24hNight: pref24hNight ?? null,
+      shiftTimeMode: normalizedShiftTimeMode,
       postPreferences: JSON.stringify(postPreferences ?? {}),
       unavailableDays: JSON.stringify(unavail),
       needsApproval,
@@ -100,6 +112,7 @@ export async function POST(req: NextRequest) {
       pref24hFull: pref24hFull ?? null,
       pref24hDay: pref24hDay ?? null,
       pref24hNight: pref24hNight ?? null,
+      shiftTimeMode: normalizedShiftTimeMode,
       postPreferences: JSON.stringify(postPreferences ?? {}),
       unavailableDays: JSON.stringify(unavail),
       needsApproval,

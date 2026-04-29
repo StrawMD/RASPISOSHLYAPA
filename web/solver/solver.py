@@ -46,6 +46,7 @@ class ScheduleSolver:
         config: MonthConfig,
         post_preferences: dict[str, dict[str, str]] | None = None,
         shift_preferences: dict[str, dict] | None = None,
+        shift_time_modes: dict[str, str] | None = None,
         seniority_filter: bool = False,
         weekday_prefs: dict[str, str] | None = None,
         weekend_prefs: dict[str, str] | None = None,
@@ -57,6 +58,7 @@ class ScheduleSolver:
         self.config = config
         self.post_prefs = post_preferences or {}
         self.shift_prefs = shift_preferences or {}
+        self.shift_time_modes = shift_time_modes or {}
         self.seniority_filter = seniority_filter
         self.weekday_prefs = weekday_prefs or {}
         self.weekend_prefs = weekend_prefs or {}
@@ -137,6 +139,7 @@ class ScheduleSolver:
         self._prefer_full_shifts()
         self._post_preference_penalty()
         self._shift_type_penalty()
+        self._shift_time_mode_penalty()
         self._weekend_fairness()
         self._weekday_weekend_penalty()
         self._day_of_week_penalty()
@@ -159,6 +162,7 @@ class ScheduleSolver:
         for e, emp in enumerate(self.employees):
             emp_blocked = blocked.get(emp.name, set())
             sp = self.shift_prefs.get(emp.name, {})
+            mode = self.shift_time_modes.get(emp.name, "neutral")
 
             for d in self.config.days:
                 if d in emp_blocked:
@@ -170,23 +174,44 @@ class ScheduleSolver:
                         continue
 
                     if p in self._24h_pidxs:
+                        # Full-shift eligibility: seniority filter or legacy
+                        # `avoid` flag.  "only_full" keeps xf — it's other
+                        # shifts that are blocked in that mode.
                         can_full = True
                         if self.seniority_filter and emp.hospital_years < 5:
                             can_full = False
                         if sp.get("pref_24h_full") is False:
                             can_full = False
+
+                        # Hard blocks only for legacy "avoid" flags and the
+                        # aggregate "only_full" mode.  Soft modes
+                        # ("prefer_full", "prefer_day") bias via penalties in
+                        # `_shift_time_mode_penalty`.
+                        block_day = (
+                            sp.get("pref_24h_day") is False
+                            or mode == "only_full"
+                        )
+                        block_night = (
+                            sp.get("pref_24h_night") is False
+                            or mode == "only_full"
+                        )
+
                         if can_full:
                             self.xf[e, d, p] = self.model.new_bool_var(
                                 f"xf_{e}_{d}_{p}")
 
-                        if sp.get("pref_24h_day") is not False:
+                        if not block_day:
                             self.xd[e, d, p] = self.model.new_bool_var(
                                 f"xd_{e}_{d}_{p}")
 
-                        if sp.get("pref_24h_night") is not False:
+                        if not block_night:
                             self.xn[e, d, p] = self.model.new_bool_var(
                                 f"xn_{e}_{d}_{p}")
                     else:
+                        # Regular 12h posts: for "only_full" we forbid any
+                        # 12h work, so no variable is created at all.
+                        if mode == "only_full":
+                            continue
                         self.x[e, d, p] = self.model.new_bool_var(
                             f"x_{e}_{d}_{p}")
 
@@ -338,12 +363,23 @@ class ScheduleSolver:
                         self._penalties.append(80 * v)
 
     def _prefer_full_shifts(self):
-        """Reward full 24h shifts (с) over split day+night."""
+        """Prefer monolithic 24h shifts (с) over two separate 12h (д)+(н).
+
+        Monolith reward (strong) plus a per-partial-shift penalty so that the
+        solver only falls back to split day/night when hour balance truly
+        requires it.
+        """
+        FULL_REWARD = 500
+        PARTIAL_PENALTY = 200
         for d in self.config.days:
             for p in self._24h_pidxs:
                 for e in range(len(self.employees)):
                     if (e, d, p) in self.xf:
-                        self._penalties.append(-150 * self.xf[e, d, p])
+                        self._penalties.append(-FULL_REWARD * self.xf[e, d, p])
+                    if (e, d, p) in self.xd:
+                        self._penalties.append(PARTIAL_PENALTY * self.xd[e, d, p])
+                    if (e, d, p) in self.xn:
+                        self._penalties.append(PARTIAL_PENALTY * self.xn[e, d, p])
 
     def _post_preference_penalty(self):
         """Per-post preference levels: prefer/neutral/avoid.
@@ -383,7 +419,13 @@ class ScheduleSolver:
                             self._penalties.append(w * self.x[e, d, p])
 
     def _shift_type_penalty(self):
-        """Reward preferred shift types, already hard-blocked 'avoid' in variables."""
+        """Legacy per-24h-post 'prefer' flags (kept for backward compat).
+
+        'avoid' values are already hard-blocked at variable creation.  New
+        preferences are expressed through `shift_time_modes` instead, handled
+        in `_shift_time_mode_penalty`.
+        """
+        PREFER_REWARD = 120
         for e, emp in enumerate(self.employees):
             sp = self.shift_prefs.get(emp.name, {})
             pf = sp.get("pref_24h_full")
@@ -393,11 +435,61 @@ class ScheduleSolver:
             for d in self.config.days:
                 for p in self._24h_pidxs:
                     if pf is True and (e, d, p) in self.xf:
-                        self._penalties.append(-20 * self.xf[e, d, p])
+                        self._penalties.append(-PREFER_REWARD * self.xf[e, d, p])
                     if pd is True and (e, d, p) in self.xd:
-                        self._penalties.append(-20 * self.xd[e, d, p])
+                        self._penalties.append(-PREFER_REWARD * self.xd[e, d, p])
                     if pn is True and (e, d, p) in self.xn:
-                        self._penalties.append(-20 * self.xn[e, d, p])
+                        self._penalties.append(-PREFER_REWARD * self.xn[e, d, p])
+
+    def _shift_time_mode_penalty(self):
+        """Aggregate shift-time preferences (applies to any post).
+
+        Modes:
+          only_full   - hard block on non-xf is enforced at variable creation
+          prefer_full - reward xf, penalise any 12h shift (x / xd / xn)
+          neutral     - no bias
+          prefer_day  - reward 12h day shifts (x regular, xd on 24h posts),
+                        penalise 24h monolith (xf) and nights (xn)
+
+        BIAS is tuned to dominate the global monolith reward (500) so that
+        personal shift-time preferences are respected even when the solver
+        would otherwise prefer a 24h monolith for coverage reasons.
+        """
+        BIAS = 600
+        for e, emp in enumerate(self.employees):
+            mode = self.shift_time_modes.get(emp.name, "neutral")
+            if mode in ("neutral", "only_full", ""):
+                # only_full is already enforced at variable-creation time.
+                continue
+
+            for d in self.config.days:
+                for p in range(len(self.posts)):
+                    if p in self._24h_pidxs:
+                        xf = self.xf.get((e, d, p))
+                        xd = self.xd.get((e, d, p))
+                        xn = self.xn.get((e, d, p))
+                        if mode == "prefer_full":
+                            if xf is not None:
+                                self._penalties.append(-BIAS * xf)
+                            if xd is not None:
+                                self._penalties.append(BIAS * xd)
+                            if xn is not None:
+                                self._penalties.append(BIAS * xn)
+                        elif mode == "prefer_day":
+                            if xf is not None:
+                                self._penalties.append(BIAS * xf)
+                            if xd is not None:
+                                self._penalties.append(-BIAS * xd)
+                            if xn is not None:
+                                self._penalties.append(BIAS * xn)
+                    else:
+                        x = self.x.get((e, d, p))
+                        if x is None:
+                            continue
+                        if mode == "prefer_full":
+                            self._penalties.append(BIAS * x)
+                        elif mode == "prefer_day":
+                            self._penalties.append(-BIAS * x)
 
     def _weekend_fairness(self):
         weekend_days = [d for d in self.config.days if self.config.is_weekend(d)]

@@ -42,6 +42,7 @@ type Employee = {
   id: string;
   name: string;
   rate: number;
+  targetRate: number;
   maxRate: number;
   seniority: number;
   hospitalStartYear: number | null;
@@ -108,6 +109,7 @@ export function EmployeeManager({ initialEmployees, posts }: Props) {
       body: JSON.stringify({
         name: "Новый сотрудник",
         rate: 1.0,
+        targetRate: 1.0,
         maxRate: 1.5,
         seniority: 0,
         hospitalStartYear: null,
@@ -197,6 +199,9 @@ export function EmployeeManager({ initialEmployees, posts }: Props) {
                   </span>
                   <Badge variant="outline" className="text-[10px] shrink-0">
                     {emp.rate}
+                    {emp.targetRate && emp.targetRate !== emp.rate
+                      ? ` → ${emp.targetRate}`
+                      : ""}
                   </Badge>
                   {emp.modalities.map((m) => (
                     <Badge
@@ -221,7 +226,7 @@ export function EmployeeManager({ initialEmployees, posts }: Props) {
               </div>
               {expanded && (
                 <CardContent className="space-y-4 pt-0">
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                     <div className="space-y-1.5">
                       <Label>Имя</Label>
                       <Input
@@ -235,9 +240,19 @@ export function EmployeeManager({ initialEmployees, posts }: Props) {
                       <Label>Ставка</Label>
                       <Select
                         value={String(emp.rate)}
-                        onValueChange={(v) =>
-                          v && updateLocal(emp.id, { rate: parseFloat(v) })
-                        }
+                        onValueChange={(v) => {
+                          if (!v) return;
+                          const rate = parseFloat(v);
+                          const nextTarget = Math.max(
+                            rate,
+                            Math.min(emp.targetRate, emp.maxRate),
+                          );
+                          updateLocal(emp.id, {
+                            rate,
+                            targetRate: nextTarget,
+                            maxRate: Math.max(emp.maxRate, rate),
+                          });
+                        }}
                       >
                         <SelectTrigger>
                           <SelectValue />
@@ -252,18 +267,45 @@ export function EmployeeManager({ initialEmployees, posts }: Props) {
                       </Select>
                     </div>
                     <div className="space-y-1.5">
-                      <Label>Макс. ставки (макс. допустимая переработка)</Label>
+                      <Label>Целевая ставка</Label>
+                      <Input
+                        type="number"
+                        step={0.25}
+                        min={emp.rate}
+                        max={emp.maxRate}
+                        value={emp.targetRate}
+                        onChange={(e) => {
+                          const raw = parseFloat(e.target.value);
+                          if (Number.isNaN(raw)) return;
+                          const clamped = Math.min(
+                            Math.max(raw, emp.rate),
+                            emp.maxRate,
+                          );
+                          updateLocal(emp.id, { targetRate: clamped });
+                        }}
+                      />
+                      <p className="text-[11px] text-muted-foreground">
+                        Желаемая загрузка (в ставках) — между ставкой и макс.
+                      </p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Макс. ставки (потолок)</Label>
                       <Input
                         type="number"
                         step={0.25}
                         min={0.5}
                         max={2.0}
                         value={emp.maxRate}
-                        onChange={(e) =>
+                        onChange={(e) => {
+                          const raw = parseFloat(e.target.value);
+                          if (Number.isNaN(raw)) return;
+                          const maxRate = Math.max(raw, emp.rate);
+                          const nextTarget = Math.min(emp.targetRate, maxRate);
                           updateLocal(emp.id, {
-                            maxRate: parseFloat(e.target.value),
-                          })
-                        }
+                            maxRate,
+                            targetRate: nextTarget,
+                          });
+                        }}
                       />
                     </div>
                   </div>
@@ -416,7 +458,7 @@ function TenureFields({
     <div className="space-y-2">
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <div className="space-y-1.5">
-          <Label>Год начала в больнице</Label>
+          <Label>Год начала работы в больнице</Label>
           <Input
             type="number"
             min={minYear}
@@ -434,7 +476,7 @@ function TenureFields({
           </p>
         </div>
         <div className="space-y-1.5">
-          <Label>Год начала карьеры</Label>
+          <Label>Год начала работы в профессии</Label>
           <Input
             type="number"
             min={minYear}

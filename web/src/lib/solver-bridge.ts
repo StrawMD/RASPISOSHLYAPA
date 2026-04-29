@@ -37,6 +37,7 @@ export interface SolverInput {
   };
   postPreferences?: Record<string, Record<string, string>>;
   shiftPreferences?: Record<string, Record<string, boolean | null>>;
+  shiftTimeModes?: Record<string, string>;
   seniorityFilter?: boolean;
   timeLimit?: number;
   weekdayPrefs?: Record<string, string>;

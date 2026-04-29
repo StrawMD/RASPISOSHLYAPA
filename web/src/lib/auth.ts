@@ -14,8 +14,13 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       async authorize(credentials) {
         if (!credentials?.login || !credentials?.password) return null;
 
+        const normalizedLogin = (credentials.login as string)
+          .trim()
+          .toLowerCase();
+        if (!normalizedLogin) return null;
+
         const user = await prisma.user.findUnique({
-          where: { login: credentials.login as string },
+          where: { login: normalizedLogin },
           include: { employee: true },
         });
 

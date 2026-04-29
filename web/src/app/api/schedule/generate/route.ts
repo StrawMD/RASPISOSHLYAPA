@@ -156,10 +156,30 @@ export async function POST(req: NextRequest) {
 
   const postPreferences: Record<string, Record<string, string>> = {};
   const shiftPreferences: Record<string, Record<string, boolean | null>> = {};
+  const shiftTimeModes: Record<string, string> = {};
   const weekdayPrefs: Record<string, string> = {};
   const weekendPrefs: Record<string, string> = {};
   const dowPrefs: Record<string, Record<string, string>> = {};
   const desiredDates: Record<string, number[]> = {};
+
+  function deriveLegacyShiftTimeMode(
+    full: string | null,
+    day: string | null,
+    night: string | null,
+  ): string {
+    if (full === "prefer" && day === "avoid" && night === "avoid")
+      return "only_full";
+    if (full === "prefer") return "prefer_full";
+    if (day === "prefer") return "prefer_day";
+    return "neutral";
+  }
+
+  const VALID_MODES = new Set([
+    "only_full",
+    "prefer_full",
+    "neutral",
+    "prefer_day",
+  ]);
 
   for (const pref of preferences) {
     const emp = employees.find((e) => e.id === pref.employeeId);
@@ -185,6 +205,18 @@ export async function POST(req: NextRequest) {
       pref_24h_night:
         pref.pref24hNight === "prefer" ? true : pref.pref24hNight === "avoid" ? false : null,
     };
+
+    const mode =
+      pref.shiftTimeMode && VALID_MODES.has(pref.shiftTimeMode)
+        ? pref.shiftTimeMode
+        : deriveLegacyShiftTimeMode(
+            pref.pref24hFull,
+            pref.pref24hDay,
+            pref.pref24hNight,
+          );
+    if (mode && mode !== "neutral") {
+      shiftTimeModes[emp.name] = mode;
+    }
 
     if (pref.weekdayPref) weekdayPrefs[emp.name] = pref.weekdayPref;
     if (pref.weekendPref) weekendPrefs[emp.name] = pref.weekendPref;
@@ -219,7 +251,9 @@ export async function POST(req: NextRequest) {
   for (const emp of employees) {
     const absentDays = (absences[emp.name] ?? []).length;
     const avail = Math.max(0, (daysInMonth - absentDays) / daysInMonth);
-    employeeTargetHours[emp.name] = nh * emp.rate * avail;
+    const target = emp.targetRate ?? emp.rate;
+    const boundedTarget = Math.min(Math.max(target, emp.rate), emp.maxRate);
+    employeeTargetHours[emp.name] = nh * boundedTarget * avail;
     employeeMaxHours[emp.name] = nh * emp.maxRate * avail;
   }
 
@@ -259,6 +293,7 @@ export async function POST(req: NextRequest) {
     },
     postPreferences,
     shiftPreferences,
+    shiftTimeModes,
     seniorityFilter: seniorityFilter ?? false,
     timeLimit: timeLimit ?? 120,
     weekdayPrefs,

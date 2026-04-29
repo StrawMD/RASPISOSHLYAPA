@@ -129,6 +129,7 @@ async function main() {
       create: {
         name: e.name,
         rate: e.rate ?? 1.0,
+        targetRate: e.rate ?? 1.0,
         maxRate: e.max_rate ?? 1.5,
         seniority: e.seniority ?? 0,
         hospitalStartYear: e.hospital_start_year ?? null,

@@ -16,6 +16,7 @@ export default async function EmployeesPage() {
         id: e.id,
         name: e.name,
         rate: e.rate,
+        targetRate: e.targetRate,
         maxRate: e.maxRate,
         seniority: e.seniority,
         hospitalStartYear: e.hospitalStartYear,
