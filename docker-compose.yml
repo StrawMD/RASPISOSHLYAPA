@@ -3,7 +3,6 @@ services:
     build:
       context: ./web
       dockerfile: Dockerfile
-    image: raspisoshlyapa-web
     restart: unless-stopped
     ports:
       - "3000:3000"
@@ -11,17 +10,5 @@ services:
       NODE_ENV: production
       DATABASE_URL: "file:/app/data/data.db"
       PORT: "3000"
-      # Set these in Timeweb App Platform env (или в .env рядом с compose).
-      NEXTAUTH_URL: "${NEXTAUTH_URL}"
-      NEXTAUTH_SECRET: "${NEXTAUTH_SECRET}"
     volumes:
-      - raspisoshlyapa-data:/app/data
-    healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://localhost:3000/api/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 5
-      start_period: 40s
-
-volumes:
-  raspisoshlyapa-data:
+      - ./data:/app/data
