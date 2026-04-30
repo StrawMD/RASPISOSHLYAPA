@@ -33,7 +33,7 @@ RUN touch /app/prisma/build-empty.db && \
     npx prisma generate && \
     npx prisma migrate deploy && \
     npm run build && \
-    rm -f /app/prisma/build-empty.db
+    rm -f /app/prisma/build-empty.db*
 
 # Trim dev deps from the final image.
 RUN npm prune --omit=dev && npm cache clean --force
