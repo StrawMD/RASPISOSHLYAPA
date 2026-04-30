@@ -25,7 +25,9 @@ RUN npm ci
 
 # Copy source and build.
 COPY . .
-RUN npx prisma generate && npm run build
+# Small VPS (≈1 GB RAM): cap Node heap so `next build` uses swap instead of OOM-killing the host.
+RUN export NODE_OPTIONS="--max-old-space-size=1536" NEXT_TELEMETRY_DISABLED=1 && \
+    npx prisma generate && npm run build
 
 # Trim dev deps from the final image.
 RUN npm prune --omit=dev && npm cache clean --force
