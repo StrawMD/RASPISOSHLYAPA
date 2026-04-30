@@ -10,5 +10,3 @@ services:
       NODE_ENV: production
       DATABASE_URL: "file:/app/data/data.db"
       PORT: "3000"
-    volumes:
-      - ./data:/app/data
