@@ -25,9 +25,15 @@ RUN npm ci
 
 # Copy source and build.
 COPY . .
-# Small VPS (≈1 GB RAM): cap Node heap so `next build` uses swap instead of OOM-killing the host.
-RUN export NODE_OPTIONS="--max-old-space-size=1536" NEXT_TELEMETRY_DISABLED=1 && \
-    npx prisma generate && npm run build
+# `next build` prerenders pages that call Prisma — need a real DATABASE_URL and schema.
+# Runtime uses `/app/data/data.db` (volume); build uses a throwaway file (not shipped as data).
+RUN touch /app/prisma/build-empty.db && \
+    export DATABASE_URL="file:/app/prisma/build-empty.db" && \
+    export NODE_OPTIONS="--max-old-space-size=1536" NEXT_TELEMETRY_DISABLED=1 && \
+    npx prisma generate && \
+    npx prisma migrate deploy && \
+    npm run build && \
+    rm -f /app/prisma/build-empty.db
 
 # Trim dev deps from the final image.
 RUN npm prune --omit=dev && npm cache clean --force
