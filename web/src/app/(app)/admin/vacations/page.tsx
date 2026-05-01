@@ -2,6 +2,8 @@ import { prisma } from "@/lib/db";
 import { VacationManager } from "./vacation-manager";
 import { getPlanningMonth } from "@/lib/planning-month";
 
+export const dynamic = "force-dynamic";
+
 function safeJson<T>(val: string | null | undefined, fallback: T): T {
   if (!val) return fallback;
   try { return JSON.parse(val); } catch { return fallback; }

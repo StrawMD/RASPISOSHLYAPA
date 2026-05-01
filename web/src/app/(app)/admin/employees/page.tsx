@@ -1,6 +1,9 @@
 import { prisma } from "@/lib/db";
 import { EmployeeManager } from "./employee-manager";
 
+/** Иначе при production-сборке в Docker данные берутся из пустой build-БД и «запекаются» в статику. */
+export const dynamic = "force-dynamic";
+
 function safeJson<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
   try { return JSON.parse(value); } catch { return fallback; }

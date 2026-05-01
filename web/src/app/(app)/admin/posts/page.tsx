@@ -1,6 +1,8 @@
 import { prisma } from "@/lib/db";
 import { PostManager } from "./post-manager";
 
+export const dynamic = "force-dynamic";
+
 function safeJson<T>(val: string | null | undefined, fallback: T): T {
   if (!val) return fallback;
   try { return JSON.parse(val); } catch { return fallback; }

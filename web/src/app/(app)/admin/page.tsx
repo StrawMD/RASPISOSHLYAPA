@@ -16,6 +16,8 @@ import {
 import { getPlanningMonth, monthLabel } from "@/lib/planning-month";
 import { PlanningMonthSwitcher } from "./planning-month-switcher";
 
+export const dynamic = "force-dynamic";
+
 const MONTH_NAMES_SHORT = [
   "Янв", "Фев", "Мар", "Апр", "Май", "Июн",
   "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек",
