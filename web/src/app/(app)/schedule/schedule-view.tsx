@@ -585,15 +585,30 @@ function TableView({
     return person.replace(/\([сдн]\)$/, "") === highlightName;
   }
 
-  /** Непрозрачный фон для липких колонок (без /opacity — иначе фамилии просвечивают). */
-  function stickyPairBg(myDay: boolean, weekend: boolean): string {
+  /**
+   * Сплошной фон для липких ячеек/строки. Возвращаем CSS-цвет, а не tailwind-класс,
+   * чтобы избежать любых каскадных конфликтов и гарантированно перекрыть фамилии.
+   */
+  function rowColors(myDay: boolean, weekend: boolean) {
     if (myDay) {
-      return "bg-sky-100 text-primary font-bold dark:bg-sky-950 dark:text-sky-100";
+      return {
+        sticky: "var(--sched-sticky-mine)",
+        row: "var(--sched-row-mine)",
+        text: "var(--sched-text-mine)",
+      };
     }
     if (weekend) {
-      return "bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-100";
+      return {
+        sticky: "var(--sched-sticky-weekend)",
+        row: "var(--sched-row-weekend)",
+        text: "var(--sched-text-weekend)",
+      };
     }
-    return "bg-card text-card-foreground";
+    return {
+      sticky: "var(--sched-sticky-default)",
+      row: "transparent",
+      text: "inherit",
+    };
   }
 
   /** Ширина первой колонки = offset второй (липкая «ДН»). */
@@ -601,29 +616,81 @@ function TableView({
 
   return (
     /*
-     * Обёртке отдаём СОБСТВЕННЫЙ вертикальный скролл, иначе sticky top
-     * прилипает к самой обёртке (она бесконечно высокая, скролл — у страницы)
-     * и шапка никогда не «доходит» до верха.
+     * Обёртке отдаём СОБСТВЕННЫЙ вертикальный скролл — иначе `sticky top`
+     * цепляется к ней самой, а скролл-то у окна → шапка никогда не «доходит» до верха.
+     * Палитра задаётся CSS-переменными, чтобы у липких ячеек был железно сплошной фон
+     * (Safari + border-collapse раньше пропускали sticky на <th>, переходим на border-separate).
      */
-    <div className="schedule-table-wrap relative overflow-auto max-h-[calc(100vh-13rem)] rounded-md border print-schedule-table">
-      <table className="w-full min-w-max text-xs border-collapse">
+    <div
+      className="schedule-table-wrap relative overflow-auto max-h-[calc(100vh-13rem)] rounded-md border print-schedule-table"
+      style={
+        {
+          // Light theme defaults; перекрываются через .dark
+          ["--sched-sticky-default" as string]: "rgb(255 255 255)",
+          ["--sched-sticky-weekend" as string]: "rgb(255 228 230)",  // rose-100
+          ["--sched-sticky-mine" as string]: "rgb(224 242 254)",     // sky-100
+          ["--sched-row-weekend" as string]: "rgb(255 241 242)",     // rose-50
+          ["--sched-row-mine" as string]: "rgb(240 249 255)",        // sky-50
+          ["--sched-text-weekend" as string]: "rgb(136 19 55)",       // rose-900
+          ["--sched-text-mine" as string]: "rgb(12 74 110)",          // sky-900
+          ["--sched-head-bg" as string]: "rgb(241 245 249)",          // slate-100
+          ["--sched-head-text" as string]: "rgb(15 23 42)",           // slate-900
+          ["--sched-head-shadow" as string]: "rgba(0,0,0,0.18)",
+          ["--sched-col-shadow" as string]: "rgba(0,0,0,0.15)",
+        } as React.CSSProperties
+      }
+    >
+      <style>{`
+        .dark .schedule-table-wrap {
+          --sched-sticky-default: rgb(15 23 42);     /* slate-900 */
+          --sched-sticky-weekend: rgb(76 5 25);      /* deep rose */
+          --sched-sticky-mine: rgb(12 35 64);        /* deep sky */
+          --sched-row-weekend: rgba(159 18 57 / .25);
+          --sched-row-mine: rgba(2 132 199 / .18);
+          --sched-text-weekend: rgb(254 205 211);    /* rose-200 */
+          --sched-text-mine: rgb(186 230 253);       /* sky-200 */
+          --sched-head-bg: rgb(30 41 59);            /* slate-800 */
+          --sched-head-text: rgb(241 245 249);       /* slate-100 */
+          --sched-head-shadow: rgba(0,0,0,0.55);
+          --sched-col-shadow: rgba(0,0,0,0.5);
+        }
+      `}</style>
+      <table
+        className="w-full min-w-max text-xs border-separate"
+        style={{ borderSpacing: 0 }}
+      >
         <thead>
           <tr>
             <th
-              className="border px-2 py-1 text-left shadow-[4px_0_10px_-4px_rgba(0,0,0,0.18)] dark:shadow-[4px_0_14px_-4px_rgba(0,0,0,0.55)] sticky left-0 top-0 z-50 min-w-[4.5rem] w-[4.5rem] max-w-[4.5rem] bg-card text-card-foreground"
+              className="px-2 py-1 text-left sticky left-0 top-0 z-50 min-w-[4.5rem] w-[4.5rem] max-w-[4.5rem] border-b border-r"
+              style={{
+                background: "var(--sched-head-bg)",
+                color: "var(--sched-head-text)",
+                boxShadow: "4px 0 10px -4px var(--sched-head-shadow)",
+              }}
             >
               Дата
             </th>
             <th
-              className="border px-2 py-1 shadow-[4px_0_10px_-4px_rgba(0,0,0,0.18)] dark:shadow-[4px_0_14px_-4px_rgba(0,0,0,0.55)] sticky top-0 z-50 min-w-[2.5rem] bg-card text-card-foreground"
-              style={{ left: firstColLeft }}
+              className="px-2 py-1 sticky top-0 z-50 min-w-[2.5rem] border-b border-r"
+              style={{
+                left: firstColLeft,
+                background: "var(--sched-head-bg)",
+                color: "var(--sched-head-text)",
+                boxShadow: "4px 0 10px -4px var(--sched-head-shadow)",
+              }}
             >
               ДН
             </th>
             {posts.map((p) => (
               <th
                 key={p.id}
-                className="border px-2 py-1 bg-card text-card-foreground whitespace-nowrap sticky top-0 z-40 border-b-2 border-b-border"
+                className="px-2 py-1 whitespace-nowrap sticky top-0 z-40 border-b border-r"
+                style={{
+                  background: "var(--sched-head-bg)",
+                  color: "var(--sched-head-text)",
+                  boxShadow: "0 4px 6px -4px var(--sched-head-shadow)",
+                }}
               >
                 {p.name}
               </th>
@@ -637,27 +704,28 @@ function TableView({
             const weekend = date.getDay() === 0 || date.getDay() === 6;
             const dayData = schedule[String(d)] || {};
             const myDay = hasMyShift(dayData);
-            const stickyBg = stickyPairBg(myDay, weekend);
+            const colors = rowColors(myDay, weekend);
 
             return (
-              <tr
-                key={d}
-                className={
-                  myDay
-                    ? "bg-sky-50 dark:bg-sky-950/40"
-                    : weekend
-                    ? "bg-rose-50 dark:bg-rose-950/40"
-                    : ""
-                }
-              >
+              <tr key={d} style={{ background: colors.row, color: colors.text }}>
                 <td
-                  className={`border px-2 py-1 font-medium sticky left-0 z-30 min-w-[4.5rem] w-[4.5rem] max-w-[4.5rem] border-r border-border shadow-[4px_0_10px_-4px_rgba(0,0,0,0.15)] dark:shadow-[4px_0_14px_-4px_rgba(0,0,0,0.5)] ${stickyBg}`}
+                  className="px-2 py-1 font-medium sticky left-0 z-30 min-w-[4.5rem] w-[4.5rem] max-w-[4.5rem] border-r border-b"
+                  style={{
+                    background: colors.sticky,
+                    color: colors.text,
+                    boxShadow: "4px 0 10px -4px var(--sched-col-shadow)",
+                  }}
                 >
                   {String(d).padStart(2, "0")}.{String(month).padStart(2, "0")}
                 </td>
                 <td
-                  className={`border px-2 py-1 sticky z-30 min-w-[2.5rem] border-r border-border shadow-[4px_0_10px_-4px_rgba(0,0,0,0.15)] dark:shadow-[4px_0_14px_-4px_rgba(0,0,0,0.5)] ${stickyBg}`}
-                  style={{ left: firstColLeft }}
+                  className="px-2 py-1 sticky z-30 min-w-[2.5rem] border-r border-b"
+                  style={{
+                    left: firstColLeft,
+                    background: colors.sticky,
+                    color: colors.text,
+                    boxShadow: "4px 0 10px -4px var(--sched-col-shadow)",
+                  }}
                 >
                   {dow}
                 </td>
@@ -667,7 +735,7 @@ function TableView({
                   return (
                     <td
                       key={p.id}
-                      className={`border px-2 py-1 ${
+                      className={`px-2 py-1 border-r border-b ${
                         cellHasMe ? "bg-primary/20" : ""
                       }`}
                     >
