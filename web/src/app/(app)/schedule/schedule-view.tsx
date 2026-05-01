@@ -607,7 +607,7 @@ function TableView({
     return {
       sticky: "var(--sched-sticky-default)",
       row: "transparent",
-      text: "inherit",
+      text: "var(--card-foreground)",
     };
   }
 
@@ -625,34 +625,40 @@ function TableView({
       className="schedule-table-wrap relative overflow-auto max-h-[calc(100vh-13rem)] rounded-md border print-schedule-table"
       style={
         {
-          // Light theme defaults; перекрываются через .dark
-          ["--sched-sticky-default" as string]: "rgb(255 255 255)",
-          ["--sched-sticky-weekend" as string]: "rgb(255 228 230)",  // rose-100
-          ["--sched-sticky-mine" as string]: "rgb(224 242 254)",     // sky-100
-          ["--sched-row-weekend" as string]: "rgb(255 241 242)",     // rose-50
-          ["--sched-row-mine" as string]: "rgb(240 249 255)",        // sky-50
-          ["--sched-text-weekend" as string]: "rgb(136 19 55)",       // rose-900
-          ["--sched-text-mine" as string]: "rgb(12 74 110)",          // sky-900
-          ["--sched-head-bg" as string]: "rgb(241 245 249)",          // slate-100
-          ["--sched-head-text" as string]: "rgb(15 23 42)",           // slate-900
-          ["--sched-head-shadow" as string]: "rgba(0,0,0,0.18)",
-          ["--sched-col-shadow" as string]: "rgba(0,0,0,0.15)",
+          /*
+           * Light theme — мягкие фоны на основе card/muted сайта.
+           * Dark theme значения переопределяются через `.dark .schedule-table-wrap` ниже.
+           */
+          ["--sched-sticky-default" as string]: "var(--card)",
+          ["--sched-sticky-weekend" as string]: "color-mix(in oklch, var(--muted) 75%, var(--destructive) 25%)",
+          ["--sched-sticky-mine" as string]: "color-mix(in oklch, var(--card) 25%, var(--primary) 75%)",
+          ["--sched-row-weekend" as string]: "color-mix(in oklch, transparent 75%, var(--destructive) 25%)",
+          ["--sched-row-mine" as string]: "color-mix(in oklch, transparent 35%, var(--primary) 65%)",
+          ["--sched-text-default" as string]: "var(--card-foreground)",
+          ["--sched-text-weekend" as string]: "var(--card-foreground)",
+          ["--sched-text-mine" as string]: "var(--primary-foreground)",
+          ["--sched-head-bg" as string]: "var(--muted)",
+          ["--sched-head-text" as string]: "var(--foreground)",
+          ["--sched-head-shadow" as string]: "rgba(0,0,0,0.12)",
+          ["--sched-col-shadow" as string]: "rgba(0,0,0,0.1)",
         } as React.CSSProperties
       }
     >
       <style>{`
         .dark .schedule-table-wrap {
-          --sched-sticky-default: rgb(15 23 42);     /* slate-900 */
-          --sched-sticky-weekend: rgb(76 5 25);      /* deep rose */
-          --sched-sticky-mine: rgb(12 35 64);        /* deep sky */
-          --sched-row-weekend: rgba(159 18 57 / .25);
-          --sched-row-mine: rgba(2 132 199 / .18);
-          --sched-text-weekend: rgb(254 205 211);    /* rose-200 */
-          --sched-text-mine: rgb(186 230 253);       /* sky-200 */
-          --sched-head-bg: rgb(30 41 59);            /* slate-800 */
-          --sched-head-text: rgb(241 245 249);       /* slate-100 */
+          --sched-sticky-default: var(--card);
+          /* Выходные — еле-еле, чтобы не «вырви глаз». */
+          --sched-sticky-weekend: color-mix(in oklch, var(--card) 88%, var(--destructive) 12%);
+          --sched-row-weekend: color-mix(in oklch, transparent 92%, var(--destructive) 8%);
+          --sched-text-weekend: var(--card-foreground);
+          /* Своя смена — доминанта: насыщенный primary. */
+          --sched-sticky-mine: color-mix(in oklch, var(--card) 18%, var(--primary) 82%);
+          --sched-row-mine: color-mix(in oklch, transparent 60%, var(--primary) 40%);
+          --sched-text-mine: var(--primary-foreground);
+          --sched-head-bg: color-mix(in oklch, var(--card) 70%, var(--muted) 30%);
+          --sched-head-text: var(--foreground);
           --sched-head-shadow: rgba(0,0,0,0.55);
-          --sched-col-shadow: rgba(0,0,0,0.5);
+          --sched-col-shadow: rgba(0,0,0,0.45);
         }
       `}</style>
       <table
