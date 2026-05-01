@@ -5,7 +5,7 @@ import { getToken } from "next-auth/jwt";
 const ADMIN_ROLES = ["admin", "schedule_manager"];
 
 // Страницы, разрешённые обычному сотруднику (UI).
-const EMPLOYEE_ALLOWED_PREFIXES = ["/schedule", "/preferences"];
+const EMPLOYEE_ALLOWED_PREFIXES = ["/schedule", "/preferences", "/profile"];
 
 // API-эндпойнты, доступные сотруднику (необходимые, чтобы страницы работали).
 const EMPLOYEE_ALLOWED_API_PREFIXES = [
