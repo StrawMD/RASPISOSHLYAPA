@@ -13,5 +13,6 @@ services:
       PORT: "3000"
       NEXTAUTH_URL: "${NEXTAUTH_URL:-http://localhost}"
       NEXTAUTH_SECRET: "${NEXTAUTH_SECRET}"
+      AUTH_TRUST_HOST: "true"
     volumes:
       - ./data:/app/data

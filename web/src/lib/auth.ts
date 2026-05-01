@@ -4,6 +4,8 @@ import { compare } from "bcryptjs";
 import { prisma } from "./db";
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
+  // VPS / reverse-proxy / доступ по IP — иначе Auth.js v5 даёт UntrustedHost (500 на /api/auth/*).
+  trustHost: true,
   providers: [
     Credentials({
       name: "credentials",
