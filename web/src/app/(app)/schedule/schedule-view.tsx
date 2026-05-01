@@ -360,6 +360,11 @@ const PRINT_CSS = `
   [role="dialog"] { display: none !important; }
   .print-schedule-table { font-size: 10px !important; }
   .print-schedule-table table { width: 100% !important; }
+  .schedule-table-wrap {
+    max-height: none !important;
+    overflow: visible !important;
+    border: 0 !important;
+  }
   .schedule-table-wrap thead th,
   .schedule-table-wrap tbody td {
     position: static !important;
@@ -586,7 +591,7 @@ function TableView({
       return "bg-sky-100 text-primary font-bold dark:bg-sky-950 dark:text-sky-100";
     }
     if (weekend) {
-      return "bg-red-50 text-red-900 dark:bg-red-950 dark:text-red-100";
+      return "bg-rose-100 text-rose-900 dark:bg-rose-950 dark:text-rose-100";
     }
     return "bg-card text-card-foreground";
   }
@@ -595,7 +600,12 @@ function TableView({
   const firstColLeft = "4.5rem";
 
   return (
-    <div className="schedule-table-wrap overflow-x-auto print-schedule-table">
+    /*
+     * Обёртке отдаём СОБСТВЕННЫЙ вертикальный скролл, иначе sticky top
+     * прилипает к самой обёртке (она бесконечно высокая, скролл — у страницы)
+     * и шапка никогда не «доходит» до верха.
+     */
+    <div className="schedule-table-wrap relative overflow-auto max-h-[calc(100vh-13rem)] rounded-md border print-schedule-table">
       <table className="w-full min-w-max text-xs border-collapse">
         <thead>
           <tr>
@@ -634,9 +644,9 @@ function TableView({
                 key={d}
                 className={
                   myDay
-                    ? "bg-primary/10"
+                    ? "bg-sky-50 dark:bg-sky-950/40"
                     : weekend
-                    ? "bg-red-950/10"
+                    ? "bg-rose-50 dark:bg-rose-950/40"
                     : ""
                 }
               >
