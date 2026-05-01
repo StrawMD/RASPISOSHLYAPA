@@ -647,14 +647,14 @@ function TableView({
       <style>{`
         .dark .schedule-table-wrap {
           --sched-sticky-default: var(--card);
-          /* Выходные — еле-еле, чтобы не «вырви глаз». */
-          --sched-sticky-weekend: color-mix(in oklch, var(--card) 88%, var(--destructive) 12%);
-          --sched-row-weekend: color-mix(in oklch, transparent 92%, var(--destructive) 8%);
+          /* Выходные — едва заметный тёплый оттенок, без «красноты». */
+          --sched-sticky-weekend: color-mix(in oklch, var(--card) 95%, var(--destructive) 5%);
+          --sched-row-weekend: color-mix(in oklch, transparent 96%, var(--destructive) 4%);
           --sched-text-weekend: var(--card-foreground);
-          /* Своя смена — доминанта: насыщенный primary. */
-          --sched-sticky-mine: color-mix(in oklch, var(--card) 18%, var(--primary) 82%);
-          --sched-row-mine: color-mix(in oklch, transparent 60%, var(--primary) 40%);
-          --sched-text-mine: var(--primary-foreground);
+          /* Своя смена — мягкая, не кричащая подложка; текст ярче для контраста. */
+          --sched-sticky-mine: color-mix(in oklch, var(--card) 70%, var(--primary) 30%);
+          --sched-row-mine: color-mix(in oklch, transparent 85%, var(--primary) 15%);
+          --sched-text-mine: color-mix(in oklch, var(--foreground) 70%, var(--primary) 30%);
           --sched-head-bg: color-mix(in oklch, var(--card) 70%, var(--muted) 30%);
           --sched-head-text: var(--foreground);
           --sched-head-shadow: rgba(0,0,0,0.55);
@@ -741,9 +741,15 @@ function TableView({
                   return (
                     <td
                       key={p.id}
-                      className={`px-2 py-1 border-r border-b ${
-                        cellHasMe ? "bg-primary/20" : ""
-                      }`}
+                      className="px-2 py-1 border-r border-b"
+                      style={
+                        cellHasMe
+                          ? {
+                              background:
+                                "color-mix(in oklch, transparent 80%, var(--primary) 20%)",
+                            }
+                          : undefined
+                      }
                     >
                       {people.length > 0
                         ? people.map((person, idx) => {
@@ -753,8 +759,13 @@ function TableView({
                                 key={idx}
                                 className={
                                   mine
-                                    ? "text-primary font-bold print-highlight"
+                                    ? "font-semibold print-highlight"
                                     : ""
+                                }
+                                style={
+                                  mine
+                                    ? { color: "var(--foreground)" }
+                                    : undefined
                                 }
                               >
                                 {person}
