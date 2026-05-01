@@ -36,6 +36,14 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  let normHours = version.month.normHours ?? 0;
+  if (normHours <= 0 && version.solverParams) {
+    const sp = safeJson<{ normHours?: number }>(version.solverParams, {});
+    if (typeof sp.normHours === "number" && sp.normHours > 0) {
+      normHours = sp.normHours;
+    }
+  }
+
   const posts = await prisma.post.findMany({ orderBy: { sortOrder: "asc" } });
   const employees = await prisma.employee.findMany({ orderBy: { name: "asc" } });
 
@@ -47,7 +55,7 @@ export async function GET(req: NextRequest) {
       status: version.status,
       year: version.month.year,
       month: version.month.month,
-      normHours: version.month.normHours,
+      normHours,
     },
     schedule: safeJson(version.data, {}),
     employeeHours: safeJson(version.employeeHours, {}),

@@ -50,7 +50,7 @@ interface HourStat {
   target: number;
   cap: number;
   remaining: number;
-  level: "green" | "yellow" | "red";
+  level: "green" | "yellow" | "red" | "neutral";
 }
 
 function computeHourStat(
@@ -58,10 +58,20 @@ function computeHourStat(
   currentHours: number,
   normHours: number
 ): HourStat {
+  if (!normHours || normHours <= 0) {
+    return {
+      hours: currentHours,
+      target: 0,
+      cap: 0,
+      remaining: 0,
+      level: "neutral",
+    };
+  }
+
   const rate = employee?.rate ?? 1;
   const maxRate = employee?.maxRate ?? rate;
   const target = normHours * rate;
-  const cap = normHours * maxRate;
+  const cap = normHours * Math.max(maxRate, rate);
   const remaining = cap - currentHours;
   const midpoint = target + (cap - target) / 2;
   let level: HourStat["level"] = "green";
@@ -77,17 +87,25 @@ const LEVEL_CLASSES: Record<HourStat["level"], string> = {
     "bg-amber-500/30 text-amber-900 dark:text-amber-100 border-amber-500/60",
   red:
     "bg-red-500/35 text-red-900 dark:text-red-100 border-red-500/70",
+  neutral:
+    "bg-muted/60 text-muted-foreground border-muted-foreground/30",
 };
 
 function HourBadge({ stat }: { stat: HourStat }) {
   const remainingLabel =
-    stat.remaining >= 0
+    stat.level === "neutral"
+      ? "норма месяца?"
+      : stat.remaining >= 0
       ? `ещё ${Math.round(stat.remaining)}ч`
       : `+${Math.round(-stat.remaining)}ч сверх`;
   return (
     <span
       className={`inline-flex items-center gap-1 rounded border px-1 py-px text-[10px] leading-none font-medium ${LEVEL_CLASSES[stat.level]}`}
-      title={`Всего: ${Math.round(stat.hours)}ч · Норма: ${Math.round(stat.target)}ч · Макс: ${Math.round(stat.cap)}ч`}
+      title={
+        stat.level === "neutral"
+          ? `Всего: ${Math.round(stat.hours)}ч · Норма месяца не задана`
+          : `Всего: ${Math.round(stat.hours)}ч · По ставке: ${Math.round(stat.target)}ч · Потолок: ${Math.round(stat.cap)}ч`
+      }
     >
       {Math.round(stat.hours)}ч
       <span className="opacity-70">· {remainingLabel}</span>
@@ -290,7 +308,7 @@ export function ScheduleEditPage() {
                               <Popover key={idx}>
                                 <PopoverTrigger
                                   className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs hover:opacity-80 transition-opacity border ${LEVEL_CLASSES[personStat.level]}`}
-                                  title={`Всего: ${Math.round(personStat.hours)}ч · Норма: ${Math.round(personStat.target)}ч · Макс: ${Math.round(personStat.cap)}ч`}
+                                  title={`Всего: ${Math.round(personStat.hours)}ч · По ставке: ${Math.round(personStat.target)}ч · Потолок: ${Math.round(personStat.cap)}ч`}
                                 >
                                   {person}
                                   <span className="opacity-70 text-[10px]">
@@ -466,7 +484,7 @@ export function ScheduleEditPage() {
                   <span
                     key={name}
                     className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs ${LEVEL_CLASSES[stat.level]}`}
-                    title={`Норма: ${Math.round(stat.target)}ч · Макс: ${Math.round(stat.cap)}ч`}
+                    title={`По ставке: ${Math.round(stat.target)}ч · Потолок: ${Math.round(stat.cap)}ч`}
                   >
                     <span className="font-medium">{name}</span>
                     <span>·</span>

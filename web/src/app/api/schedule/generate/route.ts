@@ -309,6 +309,11 @@ export async function POST(req: NextRequest) {
       where: { monthId: monthRecord.id },
     });
 
+    await prisma.month.update({
+      where: { id: monthRecord.id },
+      data: { normHours: nh },
+    });
+
     const version = await prisma.scheduleVersion.create({
       data: {
         monthId: monthRecord.id,
