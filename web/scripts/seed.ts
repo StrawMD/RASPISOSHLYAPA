@@ -12,7 +12,12 @@ import { join } from "path";
 
 const prisma = new PrismaClient();
 
-const DATA_DIR = join(__dirname, "../../data");
+/** Repo layout: JSON lives in repo-root `data/`. In Docker, that folder is mounted at `/app/data`. */
+const DATA_DIR =
+  process.env.SEED_DATA_DIR ??
+  (existsSync(join(__dirname, "../data", "posts.json"))
+    ? join(__dirname, "../data")
+    : join(__dirname, "../../data"));
 
 function readJson<T>(filename: string, fallback: T): T {
   const path = join(DATA_DIR, filename);
