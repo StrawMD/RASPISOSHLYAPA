@@ -611,9 +611,6 @@ function TableView({
     };
   }
 
-  /** Ширина первой колонки = offset второй (липкая «ДН»). */
-  const firstColLeft = "4.5rem";
-
   return (
     /*
      * Обёртке отдаём СОБСТВЕННЫЙ вертикальный скролл — иначе `sticky top`
@@ -647,18 +644,23 @@ function TableView({
       <style>{`
         .dark .schedule-table-wrap {
           --sched-sticky-default: var(--card);
-          /* Выходные — едва заметный тёплый оттенок, без «красноты». */
-          --sched-sticky-weekend: color-mix(in oklch, var(--card) 95%, var(--destructive) 5%);
-          --sched-row-weekend: color-mix(in oklch, transparent 96%, var(--destructive) 4%);
+          /* Выходные — почти неуловимый тёплый оттенок. */
+          --sched-sticky-weekend: color-mix(in oklch, var(--card) 97%, var(--destructive) 3%);
+          --sched-row-weekend: color-mix(in oklch, transparent 97%, var(--destructive) 3%);
           --sched-text-weekend: var(--card-foreground);
-          /* Своя смена — мягкая, не кричащая подложка; текст ярче для контраста. */
-          --sched-sticky-mine: color-mix(in oklch, var(--card) 70%, var(--primary) 30%);
-          --sched-row-mine: color-mix(in oklch, transparent 85%, var(--primary) 15%);
-          --sched-text-mine: color-mix(in oklch, var(--foreground) 70%, var(--primary) 30%);
+          /* Своя смена — мягкая голубоватая подложка, без перенасыщения. */
+          --sched-sticky-mine: color-mix(in oklch, var(--card) 88%, var(--primary) 12%);
+          --sched-row-mine: color-mix(in oklch, transparent 92%, var(--primary) 8%);
+          --sched-text-mine: var(--foreground);
           --sched-head-bg: color-mix(in oklch, var(--card) 70%, var(--muted) 30%);
           --sched-head-text: var(--foreground);
           --sched-head-shadow: rgba(0,0,0,0.55);
           --sched-col-shadow: rgba(0,0,0,0.45);
+          /* Жёлтая обводка ячеек со «своей» сменой. */
+          --sched-mine-ring: color-mix(in oklch, var(--card) 35%, oklch(0.78 0.16 95) 65%);
+        }
+        .schedule-table-wrap {
+          --sched-mine-ring: color-mix(in oklch, var(--card) 25%, oklch(0.75 0.18 90) 75%);
         }
       `}</style>
       <table
@@ -668,25 +670,14 @@ function TableView({
         <thead>
           <tr>
             <th
-              className="px-2 py-1 text-left sticky left-0 top-0 z-50 min-w-[4.5rem] w-[4.5rem] max-w-[4.5rem] border-b border-r"
+              className="px-2 py-1 text-left sticky left-0 top-0 z-50 whitespace-nowrap border-b border-r"
               style={{
                 background: "var(--sched-head-bg)",
                 color: "var(--sched-head-text)",
                 boxShadow: "4px 0 10px -4px var(--sched-head-shadow)",
               }}
             >
-              Дата
-            </th>
-            <th
-              className="px-2 py-1 sticky top-0 z-50 min-w-[2.5rem] border-b border-r"
-              style={{
-                left: firstColLeft,
-                background: "var(--sched-head-bg)",
-                color: "var(--sched-head-text)",
-                boxShadow: "4px 0 10px -4px var(--sched-head-shadow)",
-              }}
-            >
-              ДН
+              Дата · ДН
             </th>
             {posts.map((p) => (
               <th
@@ -715,25 +706,17 @@ function TableView({
             return (
               <tr key={d} style={{ background: colors.row, color: colors.text }}>
                 <td
-                  className="px-2 py-1 font-medium sticky left-0 z-30 min-w-[4.5rem] w-[4.5rem] max-w-[4.5rem] border-r border-b"
+                  className="px-2 py-1 font-medium sticky left-0 z-30 whitespace-nowrap border-r border-b"
                   style={{
                     background: colors.sticky,
                     color: colors.text,
                     boxShadow: "4px 0 10px -4px var(--sched-col-shadow)",
                   }}
                 >
-                  {String(d).padStart(2, "0")}.{String(month).padStart(2, "0")}
-                </td>
-                <td
-                  className="px-2 py-1 sticky z-30 min-w-[2.5rem] border-r border-b"
-                  style={{
-                    left: firstColLeft,
-                    background: colors.sticky,
-                    color: colors.text,
-                    boxShadow: "4px 0 10px -4px var(--sched-col-shadow)",
-                  }}
-                >
-                  {dow}
+                  <span className="tabular-nums">
+                    {String(d).padStart(2, "0")}.{String(month).padStart(2, "0")}
+                  </span>
+                  <span className="opacity-60 ml-1.5">{dow}</span>
                 </td>
                 {posts.map((p) => {
                   const people = dayData[p.id] || [];
@@ -741,12 +724,14 @@ function TableView({
                   return (
                     <td
                       key={p.id}
-                      className="px-2 py-1 border-r border-b"
+                      className="px-2 py-1 border-r border-b relative"
                       style={
                         cellHasMe
                           ? {
                               background:
-                                "color-mix(in oklch, transparent 80%, var(--primary) 20%)",
+                                "color-mix(in oklch, transparent 88%, var(--primary) 12%)",
+                              boxShadow:
+                                "inset 0 0 0 2px var(--sched-mine-ring)",
                             }
                           : undefined
                       }
