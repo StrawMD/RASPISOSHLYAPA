@@ -360,6 +360,14 @@ const PRINT_CSS = `
   [role="dialog"] { display: none !important; }
   .print-schedule-table { font-size: 10px !important; }
   .print-schedule-table table { width: 100% !important; }
+  .schedule-table-wrap thead th,
+  .schedule-table-wrap tbody td {
+    position: static !important;
+    left: auto !important;
+    top: auto !important;
+    z-index: auto !important;
+    box-shadow: none !important;
+  }
   .print-highlight {
     background: #fde68a !important;
     color: #000 !important;
@@ -572,15 +580,41 @@ function TableView({
     return person.replace(/\([сдн]\)$/, "") === highlightName;
   }
 
+  /** Непрозрачный фон для липких колонок (без /opacity — иначе фамилии просвечивают). */
+  function stickyPairBg(myDay: boolean, weekend: boolean): string {
+    if (myDay) {
+      return "bg-sky-100 text-primary font-bold dark:bg-sky-950 dark:text-sky-100";
+    }
+    if (weekend) {
+      return "bg-red-50 text-red-900 dark:bg-red-950 dark:text-red-100";
+    }
+    return "bg-card text-card-foreground";
+  }
+
+  /** Ширина первой колонки = offset второй (липкая «ДН»). */
+  const firstColLeft = "4.5rem";
+
   return (
-    <div className="overflow-x-auto print-schedule-table">
-      <table className="w-full text-xs border-collapse">
+    <div className="schedule-table-wrap overflow-x-auto print-schedule-table">
+      <table className="w-full min-w-max text-xs border-collapse">
         <thead>
           <tr>
-            <th className="border px-2 py-1 bg-muted sticky left-0 z-10">Дата</th>
-            <th className="border px-2 py-1 bg-muted sticky left-[3.5rem] z-10">ДН</th>
+            <th
+              className="border px-2 py-1 text-left shadow-[4px_0_10px_-4px_rgba(0,0,0,0.18)] dark:shadow-[4px_0_14px_-4px_rgba(0,0,0,0.55)] sticky left-0 top-0 z-50 min-w-[4.5rem] w-[4.5rem] max-w-[4.5rem] bg-card text-card-foreground"
+            >
+              Дата
+            </th>
+            <th
+              className="border px-2 py-1 shadow-[4px_0_10px_-4px_rgba(0,0,0,0.18)] dark:shadow-[4px_0_14px_-4px_rgba(0,0,0,0.55)] sticky top-0 z-50 min-w-[2.5rem] bg-card text-card-foreground"
+              style={{ left: firstColLeft }}
+            >
+              ДН
+            </th>
             {posts.map((p) => (
-              <th key={p.id} className="border px-2 py-1 bg-muted whitespace-nowrap">
+              <th
+                key={p.id}
+                className="border px-2 py-1 bg-card text-card-foreground whitespace-nowrap sticky top-0 z-40 border-b-2 border-b-border"
+              >
                 {p.name}
               </th>
             ))}
@@ -593,31 +627,27 @@ function TableView({
             const weekend = date.getDay() === 0 || date.getDay() === 6;
             const dayData = schedule[String(d)] || {};
             const myDay = hasMyShift(dayData);
+            const stickyBg = stickyPairBg(myDay, weekend);
 
             return (
               <tr
                 key={d}
                 className={
                   myDay
-                    ? "bg-primary/15"
+                    ? "bg-primary/10"
                     : weekend
                     ? "bg-red-950/10"
                     : ""
                 }
               >
                 <td
-                  className={`border px-2 py-1 font-medium sticky left-0 z-[5] ${
-                    myDay
-                      ? "bg-primary/25 text-primary font-bold"
-                      : "bg-inherit"
-                  }`}
+                  className={`border px-2 py-1 font-medium sticky left-0 z-30 min-w-[4.5rem] w-[4.5rem] max-w-[4.5rem] border-r border-border shadow-[4px_0_10px_-4px_rgba(0,0,0,0.15)] dark:shadow-[4px_0_14px_-4px_rgba(0,0,0,0.5)] ${stickyBg}`}
                 >
                   {String(d).padStart(2, "0")}.{String(month).padStart(2, "0")}
                 </td>
                 <td
-                  className={`border px-2 py-1 sticky left-[3.5rem] z-[5] ${
-                    myDay ? "bg-primary/25" : "bg-inherit"
-                  }`}
+                  className={`border px-2 py-1 sticky z-30 min-w-[2.5rem] border-r border-border shadow-[4px_0_10px_-4px_rgba(0,0,0,0.15)] dark:shadow-[4px_0_14px_-4px_rgba(0,0,0,0.5)] ${stickyBg}`}
+                  style={{ left: firstColLeft }}
                 >
                   {dow}
                 </td>
