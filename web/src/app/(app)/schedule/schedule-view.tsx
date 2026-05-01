@@ -643,24 +643,30 @@ function TableView({
     >
       <style>{`
         .dark .schedule-table-wrap {
-          --sched-sticky-default: var(--card);
-          /* Выходные — почти неуловимый тёплый оттенок. */
-          --sched-sticky-weekend: color-mix(in oklch, var(--card) 97%, var(--destructive) 3%);
-          --sched-row-weekend: color-mix(in oklch, transparent 97%, var(--destructive) 3%);
+          /*
+           * Липкие ячейки берут цвет светлее основного card —
+           * иначе при горизонтальной прокрутке сливаются с фоном таблицы.
+           */
+          --sched-sticky-default: color-mix(in oklch, var(--card) 60%, var(--muted) 40%);
+          /* Выходные — едва уловимый тёплый оттенок. */
+          --sched-sticky-weekend: color-mix(in oklch, var(--sched-sticky-default) 96%, var(--destructive) 4%);
+          --sched-row-weekend: color-mix(in oklch, transparent 98%, var(--destructive) 2%);
           --sched-text-weekend: var(--card-foreground);
-          /* Своя смена — мягкая голубоватая подложка, без перенасыщения. */
-          --sched-sticky-mine: color-mix(in oklch, var(--card) 88%, var(--primary) 12%);
-          --sched-row-mine: color-mix(in oklch, transparent 92%, var(--primary) 8%);
+          /* Своя смена — едва различимая голубая дымка. */
+          --sched-sticky-mine: color-mix(in oklch, var(--sched-sticky-default) 92%, var(--primary) 8%);
+          --sched-row-mine: color-mix(in oklch, transparent 95%, var(--primary) 5%);
           --sched-text-mine: var(--foreground);
-          --sched-head-bg: color-mix(in oklch, var(--card) 70%, var(--muted) 30%);
+          --sched-head-bg: color-mix(in oklch, var(--card) 50%, var(--muted) 50%);
           --sched-head-text: var(--foreground);
           --sched-head-shadow: rgba(0,0,0,0.55);
           --sched-col-shadow: rgba(0,0,0,0.45);
-          /* Жёлтая обводка ячеек со «своей» сменой. */
-          --sched-mine-ring: color-mix(in oklch, var(--card) 35%, oklch(0.78 0.16 95) 65%);
+          /* Подсветка ячеек со «своей» сменой. */
+          --sched-mine-cell: color-mix(in oklch, transparent 94%, var(--primary) 6%);
+          --sched-mine-ring: oklch(0.85 0.18 95);
         }
         .schedule-table-wrap {
-          --sched-mine-ring: color-mix(in oklch, var(--card) 25%, oklch(0.75 0.18 90) 75%);
+          --sched-mine-cell: color-mix(in oklch, transparent 92%, var(--primary) 8%);
+          --sched-mine-ring: oklch(0.78 0.18 90);
         }
       `}</style>
       <table
@@ -728,10 +734,9 @@ function TableView({
                       style={
                         cellHasMe
                           ? {
-                              background:
-                                "color-mix(in oklch, transparent 88%, var(--primary) 12%)",
+                              background: "var(--sched-mine-cell)",
                               boxShadow:
-                                "inset 0 0 0 2px var(--sched-mine-ring)",
+                                "inset 0 0 0 4px var(--sched-mine-ring)",
                             }
                           : undefined
                       }
