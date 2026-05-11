@@ -12,7 +12,7 @@ function safeJson<T>(value: string | null | undefined, fallback: T): T {
   }
 }
 
-async function requireAdmin() {
+async function requireAdminOnly() {
   const session = await auth();
   if (!session?.user || session.user.role !== "admin") {
     return null;
@@ -20,9 +20,20 @@ async function requireAdmin() {
   return session;
 }
 
-/** GET: загрузить фиксированные слоты месяца (только admin). */
+async function requirePlannerOrAdmin() {
+  const session = await auth();
+  if (
+    !session?.user ||
+    !["admin", "schedule_manager"].includes(session.user.role)
+  ) {
+    return null;
+  }
+  return session;
+}
+
+/** GET: загрузить фиксированные слоты месяца (админ и составитель графика). */
 export async function GET(req: NextRequest) {
-  if (!(await requireAdmin())) {
+  if (!(await requirePlannerOrAdmin())) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
@@ -48,7 +59,7 @@ export async function GET(req: NextRequest) {
 
 /** PATCH: сохранить JSON фиксированных слотов (только admin). */
 export async function PATCH(req: NextRequest) {
-  if (!(await requireAdmin())) {
+  if (!(await requireAdminOnly())) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 

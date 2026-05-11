@@ -112,9 +112,10 @@ export default function FixedSlotsPage() {
           Фиксированные слоты для генератора
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Только администратор. Эти ячейки солвер обязан соблюдать при запуске
-          из раздела «Генерация». Формат совпадает с расписанием: день → пост →
-          список фамилий; на суточных постах указывайте{" "}
+          Просмотр — админ и составитель графика;{" "}
+          <strong className="text-foreground font-medium">сохранять JSON может только администратор.</strong>{" "}
+          Эти ячейки солвер обязан соблюдать при запуске из «Генерация». Формат:
+          день → пост → список фамилий; на суточных постах указывайте{" "}
           <span className="font-mono text-xs">(с)</span>,{" "}
           <span className="font-mono text-xs">(д)</span> или{" "}
           <span className="font-mono text-xs">(н)</span>.

@@ -35,6 +35,7 @@ export default function GeneratePage() {
   const [result, setResult] = useState<{
     versionNumber: number;
     employeeHours: Record<string, number>;
+    fixedSlotsApplied?: number;
   } | null>(null);
 
   async function handleGenerate() {
@@ -65,8 +66,14 @@ export default function GeneratePage() {
       setResult({
         versionNumber: data.versionNumber,
         employeeHours: data.employeeHours,
+        fixedSlotsApplied: data.fixedSlotsApplied,
       });
-      toast.success(`Версия ${data.versionNumber} создана!`);
+      const fs = typeof data.fixedSlotsApplied === "number" ? data.fixedSlotsApplied : 0;
+      toast.success(
+        fs > 0
+          ? `Черновик v${data.versionNumber}: учтено фиксированных ячеек — ${fs}. На общей странице «Расписание» видна только опубликованная версия: откройте «Версии» и опубликуйте черновик или «Редактор».`
+          : `Черновик v${data.versionNumber} создан без фиксов месяца (JSON в «Фикс. слоты» пуст или другой месяц). Опубликуйте в «Версии», чтобы обновить общее расписание.`
+      );
     } catch {
       toast.error("Ошибка соединения");
     } finally {
@@ -201,13 +208,28 @@ export default function GeneratePage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground mb-3">
-              Перейдите во{" "}
-              <a href="/admin/versions" className="underline">
+            <p className="text-sm text-muted-foreground mb-2">
+              Это <strong>черновик</strong> — на странице «Расписание» для
+              сотрудников по-прежнему показывается только{" "}
+              <strong>опубликованная</strong> версия. Перейдите во{" "}
+              <a href="/admin/versions" className="underline font-medium">
                 Версии
               </a>{" "}
-              для просмотра и публикации.
+              и нажмите «Опубликовать» у нужной версии.
             </p>
+            {typeof result.fixedSlotsApplied === "number" && (
+              <p className="text-sm mb-3">
+                Фиксированных ячеек в расчёте:{" "}
+                <strong>{result.fixedSlotsApplied}</strong>
+                {result.fixedSlotsApplied === 0 && (
+                  <span className="text-muted-foreground">
+                    {" "}
+                    — проверьте «Фикс. слоты» для того же года и месяца и что вы
+                    нажали «Сохранить» под учётной записью администратора.
+                  </span>
+                )}
+              </p>
+            )}
             <div className="flex flex-wrap gap-2">
               {Object.entries(result.employeeHours)
                 .sort(([a], [b]) => a.localeCompare(b))

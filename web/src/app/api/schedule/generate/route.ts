@@ -258,7 +258,12 @@ export async function POST(req: NextRequest) {
     employeeMaxHours[emp.name] = nh * emp.maxRate * avail;
   }
 
-  const rawFixed = safeJson<unknown>(monthRecord.solverFixedSlots, {});
+  /** Актуальные фиксы из БД (не только снимок в начале запроса). */
+  const monthRow = await prisma.month.findUnique({
+    where: { id: monthRecord.id },
+    select: { solverFixedSlots: true },
+  });
+  const rawFixed = safeJson<unknown>(monthRow?.solverFixedSlots ?? "{}", {});
   const employeesForValidation = employees.map((e) => ({
     name: e.name,
     allowedPosts: safeJson<string[]>(e.allowedPosts, []),
@@ -275,6 +280,14 @@ export async function POST(req: NextRequest) {
   }
   const fixedSlotsForSolver =
     Object.keys(fixedCheck.data).length > 0 ? fixedCheck.data : undefined;
+  let fixedSlotsCount = 0;
+  if (fixedSlotsForSolver) {
+    for (const byPost of Object.values(fixedSlotsForSolver)) {
+      for (const labels of Object.values(byPost)) {
+        fixedSlotsCount += labels.length;
+      }
+    }
+  }
 
   const solverInput: SolverInput = {
     posts: posts.map((p) => ({
@@ -346,6 +359,7 @@ export async function POST(req: NextRequest) {
           normHours: nh,
           timeLimit,
           seniorityFilter,
+          fixedSlotsApplied: fixedSlotsCount,
         }),
         createdById: session.user.id,
       },
@@ -356,6 +370,8 @@ export async function POST(req: NextRequest) {
       versionId: version.id,
       versionNumber: version.versionNumber,
       employeeHours: result.employeeHours,
+      fixedSlotsApplied: fixedSlotsCount,
+      status: "draft",
     });
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : "Unknown error";
