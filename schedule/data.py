@@ -107,7 +107,6 @@ EMPLOYEES: list[Employee] = [
     Employee("Хорова",       1.0, ["kt_2011", "kt_2013"]),
     Employee("Федотов",      1.0, ["kt_ssk2", "kt_2011", "kt_2013", "kt_4str"]),
     Employee("Смирнова",     1.0, ["kt_2013", "toshiba", "kt_4str"]),
-    Employee("Седова",       1.0, ["kt_2013", "toshiba", "kt_4str"]),
     Employee("Шейх",         1.0, ["toshiba", "kt_4str"]),
     Employee("Карабаева",    1.0, ["mrt_ssk", "kt_ssk2", "ge_siemens", "kt_2011",
                                    "toshiba", "kt_4str", "mrt_22_1", "mrt_21_1"]),

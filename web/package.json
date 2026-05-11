@@ -9,6 +9,7 @@
     "lint": "eslint",
     "db:migrate": "npx prisma migrate dev",
     "db:seed": "npx tsx scripts/seed.ts",
+    "import-schedule-csv": "npx tsx scripts/import-schedule-csv.ts",
     "db:studio": "npx prisma studio"
   },
   "dependencies": {

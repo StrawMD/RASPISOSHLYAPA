@@ -132,22 +132,6 @@
     ]
   },
   {
-    "name": "Седова",
-    "rate": 0.5,
-    "max_rate": 0.5,
-    "seniority": 0,
-    "prefers_overtime": null,
-    "avoid_weekends": false,
-    "allowed_posts": [
-      "kt_4str",
-      "kt_2013"
-    ],
-    "post_preferences": [
-      "kt_4str",
-      "kt_2013"
-    ]
-  },
-  {
     "name": "Федотов",
     "rate": 0.5,
     "max_rate": 1.5,
