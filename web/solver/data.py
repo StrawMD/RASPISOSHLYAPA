@@ -118,7 +118,7 @@ EMPLOYEES: list[Employee] = [
     Employee("Мхитарян",     1.0, ["mrt_ssk", "kt_4str", "mrt_22_1", "mrt_21_1"]),
     Employee("Гончарук",     1.0, ["mrt_ssk", "kt_4str", "mrt_22_1", "mrt_21_1"]),
     Employee("Магомедов",    1.0, ["mrt_ssk", "mrt_22_1", "mrt_21_1"]),
-    Employee("Кучук",        0.5, ["mrt_22_1", "mrt_21_1"]),
+    Employee("Кучук",        0.5, ["mrt_ssk", "mrt_22_1", "mrt_21_1"]),
 ]
 
 EMPLOYEE_BY_NAME: dict[str, Employee] = {e.name: e for e in EMPLOYEES}

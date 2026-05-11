@@ -759,9 +759,13 @@
     "prefers_overtime": null,
     "avoid_weekends": false,
     "allowed_posts": [
+      "mrt_ssk",
+      "mrt_22_1",
       "mrt_21_1"
     ],
     "post_preferences": [
+      "mrt_ssk",
+      "mrt_22_1",
       "mrt_21_1"
     ]
   }
