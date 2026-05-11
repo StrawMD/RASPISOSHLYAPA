@@ -59,7 +59,10 @@ export default function FixedSlotsPage() {
       );
       const data = await res.json();
       if (!res.ok) {
-        toast.error(data.error || "Ошибка загрузки");
+        toast.error(
+          data.error ||
+            `Ошибка загрузки (${res.status}). Если про migrate — выполни в web: npx prisma migrate deploy`
+        );
         return;
       }
       setText(JSON.stringify(data.fixedSlots ?? {}, null, 2));

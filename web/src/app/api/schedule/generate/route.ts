@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { runSolver, SolverInput } from "@/lib/solver-bridge";
 import { computeTenure } from "@/lib/seniority";
+import { prismaSchemaHint } from "@/lib/prisma-schema-hint";
 import { validateFixedSlots } from "@/lib/validate-fixed-slots";
 
 function safeJson<T>(value: string | null | undefined, fallback: T): T {
@@ -19,6 +20,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  try {
   const body = await req.json();
   const { year, month, normHours, timeLimit, seniorityFilter, versionName } =
     body;
@@ -335,7 +337,6 @@ export async function POST(req: NextRequest) {
     desiredDates,
   };
 
-  try {
     const result = await runSolver(solverInput);
 
     const versionCount = await prisma.scheduleVersion.count({
@@ -374,7 +375,10 @@ export async function POST(req: NextRequest) {
       status: "draft",
     });
   } catch (e: unknown) {
-    const message = e instanceof Error ? e.message : "Unknown error";
+    console.error("[api/schedule/generate]", e);
+    let message =
+      prismaSchemaHint(e) ??
+      (e instanceof Error ? e.message : "Unknown error");
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

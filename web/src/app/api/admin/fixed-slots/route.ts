@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { prismaSchemaHint } from "@/lib/prisma-schema-hint";
 import { validateFixedSlots } from "@/lib/validate-fixed-slots";
 
 function safeJson<T>(value: string | null | undefined, fallback: T): T {
@@ -37,24 +38,37 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const { searchParams } = new URL(req.url);
-  const year = parseInt(searchParams.get("year") ?? "0", 10);
-  const month = parseInt(searchParams.get("month") ?? "0", 10);
-  if (!year || !month || month < 1 || month > 12) {
-    return NextResponse.json({ error: "year and month required" }, { status: 400 });
+  try {
+    const { searchParams } = new URL(req.url);
+    const year = parseInt(searchParams.get("year") ?? "0", 10);
+    const month = parseInt(searchParams.get("month") ?? "0", 10);
+    if (!year || !month || month < 1 || month > 12) {
+      return NextResponse.json({ error: "year and month required" }, { status: 400 });
+    }
+
+    const record = await prisma.month.findUnique({
+      where: { year_month: { year, month } },
+      select: { solverFixedSlots: true },
+    });
+
+    const fixedSlots = safeJson<Record<string, Record<string, string[]>>>(
+      record?.solverFixedSlots ?? "{}",
+      {}
+    );
+
+    return NextResponse.json({ fixedSlots });
+  } catch (e: unknown) {
+    console.error("[api/admin/fixed-slots GET]", e);
+    const hint = prismaSchemaHint(e);
+    return NextResponse.json(
+      {
+        error:
+          hint ??
+          (e instanceof Error ? e.message : "Ошибка загрузки фиксированных слотов"),
+      },
+      { status: 500 }
+    );
   }
-
-  const record = await prisma.month.findUnique({
-    where: { year_month: { year, month } },
-    select: { solverFixedSlots: true },
-  });
-
-  const fixedSlots = safeJson<Record<string, Record<string, string[]>>>(
-    record?.solverFixedSlots ?? "{}",
-    {}
-  );
-
-  return NextResponse.json({ fixedSlots });
 }
 
 /** PATCH: сохранить JSON фиксированных слотов (только admin). */
@@ -63,6 +77,7 @@ export async function PATCH(req: NextRequest) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
+  try {
   const body = await req.json();
   const year = body.year as number;
   const month = body.month as number;
@@ -104,4 +119,16 @@ export async function PATCH(req: NextRequest) {
   });
 
   return NextResponse.json({ ok: true, fixedSlots: check.data });
+  } catch (e: unknown) {
+    console.error("[api/admin/fixed-slots PATCH]", e);
+    const hint = prismaSchemaHint(e);
+    return NextResponse.json(
+      {
+        error:
+          hint ??
+          (e instanceof Error ? e.message : "Ошибка сохранения фиксированных слотов"),
+      },
+      { status: 500 }
+    );
+  }
 }
