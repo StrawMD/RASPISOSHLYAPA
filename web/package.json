@@ -10,6 +10,7 @@
     "db:migrate": "npx prisma migrate dev",
     "db:seed": "npx tsx scripts/seed.ts",
     "import-schedule-csv": "npx tsx scripts/import-schedule-csv.ts",
+    "csv-to-solver-fixed-slots": "npx tsx scripts/csv-to-solver-fixed-slots.ts",
     "db:studio": "npx prisma studio"
   },
   "dependencies": {
