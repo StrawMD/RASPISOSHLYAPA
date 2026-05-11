@@ -73,6 +73,23 @@ def main():
     dow_prefs = input_data.get("dowPrefs", {})
     desired_dates = input_data.get("desiredDates", {})
 
+    raw_fixed = cfg.get("fixedSlots") or {}
+    fixed_slots: dict[int, dict[str, list[str]]] = {}
+    if isinstance(raw_fixed, dict):
+        for dk, posts_dict in raw_fixed.items():
+            try:
+                d = int(dk)
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(posts_dict, dict):
+                continue
+            fixed_slots[d] = {}
+            for pid, labels in posts_dict.items():
+                if isinstance(labels, list):
+                    fixed_slots[d][str(pid)] = [str(x) for x in labels]
+                else:
+                    fixed_slots[d][str(pid)] = []
+
     solver = ScheduleSolver(
         posts, employees, config,
         post_preferences=post_prefs,
@@ -83,12 +100,22 @@ def main():
         weekend_prefs=weekend_prefs,
         dow_prefs=dow_prefs,
         desired_dates=desired_dates,
+        fixed_slots=fixed_slots if fixed_slots else None,
     )
 
     result = solver.solve(time_limit_seconds=time_limit)
 
     if result is None:
-        print(json.dumps({"error": "No solution found"}))
+        errs = getattr(solver, "_fixed_slot_errors", None)
+        if errs:
+            print(
+                json.dumps(
+                    {"error": "fixed_slots", "messages": errs},
+                    ensure_ascii=False,
+                )
+            )
+        else:
+            print(json.dumps({"error": "No solution found"}))
         sys.exit(0)
 
     output = {

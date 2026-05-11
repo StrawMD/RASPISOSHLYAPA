@@ -27,6 +27,7 @@ CP-SAT солвер для автоматического составления
 
 from __future__ import annotations
 
+import re
 import sys
 
 from ortools.sat.python import cp_model
@@ -52,6 +53,7 @@ class ScheduleSolver:
         weekend_prefs: dict[str, str] | None = None,
         dow_prefs: dict[str, dict[str, str]] | None = None,
         desired_dates: dict[str, list[int]] | None = None,
+        fixed_slots: dict[int, dict[str, list[str]]] | None = None,
     ):
         self.posts = posts
         self.employees = employees
@@ -64,6 +66,7 @@ class ScheduleSolver:
         self.weekend_prefs = weekend_prefs or {}
         self.dow_prefs = dow_prefs or {}
         self.desired_dates = desired_dates or {}
+        self.fixed_slots = fixed_slots or {}
         self.model = cp_model.CpModel()
 
         self.x: dict[tuple[int, int, int], cp_model.IntVar] = {}
@@ -129,6 +132,7 @@ class ScheduleSolver:
 
     def _build(self):
         self._create_variables()
+        self._apply_fixed_slots()
         self._coverage()
         self._one_shift_per_day()
         self._rest_constraints()
@@ -214,6 +218,83 @@ class ScheduleSolver:
                             continue
                         self.x[e, d, p] = self.model.new_bool_var(
                             f"x_{e}_{d}_{p}")
+
+    def _apply_fixed_slots(self):
+        """Жёстко задать выбранные смены (админ): соответствующая bool-переменная == 1."""
+        self._fixed_slot_errors: list[str] = []
+        if not self.fixed_slots:
+            return
+
+        label_re = re.compile(r"^(.+)\(([сдн])\)$")
+
+        emp_idx = {emp.name: i for i, emp in enumerate(self.employees)}
+        post_idx = {post.id: i for i, post in enumerate(self.posts)}
+
+        for d, by_post in sorted(self.fixed_slots.items()):
+            if d not in self.config.days:
+                self._fixed_slot_errors.append(
+                    f"День {d} не входит в месяц (активные дни: "
+                    f"{self.config.days[0]}–{self.config.days[-1]})"
+                )
+                continue
+            for post_id, labels in by_post.items():
+                if post_id not in post_idx:
+                    self._fixed_slot_errors.append(f"Неизвестный пост «{post_id}»")
+                    continue
+                p = post_idx[post_id]
+                post = self.posts[p]
+                if not isinstance(labels, list):
+                    self._fixed_slot_errors.append(
+                        f"День {d}, {post_id}: ожидается массив имён"
+                    )
+                    continue
+                for label in labels:
+                    raw = str(label).strip()
+                    if not raw:
+                        continue
+                    m = label_re.match(raw)
+                    if post.shift_hours == 24:
+                        if not m:
+                            self._fixed_slot_errors.append(
+                                f"«{raw}»: на суточном посту укажите тип смены "
+                                f"— (с), (д) или (н)"
+                            )
+                            continue
+                        name, st = m.group(1), m.group(2)
+                    else:
+                        if m:
+                            name = m.group(1)
+                        else:
+                            name = raw
+
+                    ei = emp_idx.get(name)
+                    if ei is None:
+                        self._fixed_slot_errors.append(
+                            f"«{raw}»: сотрудник «{name}» не найден"
+                        )
+                        continue
+
+                    var = None
+                    if post.shift_hours == 24:
+                        if st == "с":
+                            var = self.xf.get((ei, d, p))
+                        elif st == "д":
+                            var = self.xd.get((ei, d, p))
+                        elif st == "н":
+                            var = self.xn.get((ei, d, p))
+                    else:
+                        var = self.x.get((ei, d, p))
+
+                    if var is None:
+                        self._fixed_slot_errors.append(
+                            f"«{raw}» нельзя зафиксировать: день {d}, "
+                            f"{post.name} — нет подходящей смены "
+                            f"(выходной, квалификация, пост не активен в этот день, "
+                            f"или режим only_full и т.п.)"
+                        )
+                        continue
+
+                    self.model.add(var == 1)
 
     # ------------------------------------------------------------------
     #  Жёсткие ограничения
@@ -602,6 +683,12 @@ class ScheduleSolver:
     # ------------------------------------------------------------------
 
     def solve(self, time_limit_seconds: int = 120) -> dict | None:
+        if getattr(self, "_fixed_slot_errors", None):
+            _log("\n✗ Фиксированные слоты:")
+            for msg in self._fixed_slot_errors:
+                _log(f"  • {msg}")
+            return None
+
         solver = cp_model.CpSolver()
         solver.parameters.max_time_in_seconds = time_limit_seconds
         solver.parameters.num_workers = 8

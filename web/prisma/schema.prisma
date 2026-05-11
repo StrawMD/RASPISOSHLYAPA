@@ -84,6 +84,8 @@ model Month {
   normHours Float
   deadline  DateTime?
   status    String   @default("collecting")
+  /** JSON: Record<dayStr, Record<postId, string[]>> — фиксированные ячейки для солвера (только админ). */
+  solverFixedSlots String @default("{}")
 
   versions        ScheduleVersion[]
   postConfigs     MonthPostConfig[]

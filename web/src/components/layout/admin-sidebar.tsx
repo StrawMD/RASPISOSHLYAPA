@@ -13,11 +13,13 @@ import {
   ClipboardList,
   Palmtree,
   ArrowLeft,
+  Pin,
 } from "lucide-react";
 
 const ADMIN_NAV = [
   { href: "/admin", label: "Обзор", icon: ClipboardList, exact: true },
   { href: "/admin/generate", label: "Генерация", icon: Sparkles },
+  { href: "/admin/fixed-slots", label: "Фикс. слоты", icon: Pin },
   { href: "/admin/versions", label: "Версии", icon: History },
   { href: "/admin/schedule/edit", label: "Редактор", icon: FileEdit },
   { href: "/admin/employees", label: "Сотрудники", icon: Users },

@@ -3,6 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { runSolver, SolverInput } from "@/lib/solver-bridge";
 import { computeTenure } from "@/lib/seniority";
+import { validateFixedSlots } from "@/lib/validate-fixed-slots";
 
 function safeJson<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
@@ -257,6 +258,24 @@ export async function POST(req: NextRequest) {
     employeeMaxHours[emp.name] = nh * emp.maxRate * avail;
   }
 
+  const rawFixed = safeJson<unknown>(monthRecord.solverFixedSlots, {});
+  const employeesForValidation = employees.map((e) => ({
+    name: e.name,
+    allowedPosts: safeJson<string[]>(e.allowedPosts, []),
+  }));
+  const fixedCheck = validateFixedSlots(
+    rawFixed,
+    year,
+    month,
+    posts.map((p) => ({ id: p.id, shiftHours: p.shiftHours })),
+    employeesForValidation
+  );
+  if (!fixedCheck.ok) {
+    return NextResponse.json({ error: fixedCheck.error }, { status: 400 });
+  }
+  const fixedSlotsForSolver =
+    Object.keys(fixedCheck.data).length > 0 ? fixedCheck.data : undefined;
+
   const solverInput: SolverInput = {
     posts: posts.map((p) => ({
       id: p.id,
@@ -290,6 +309,7 @@ export async function POST(req: NextRequest) {
       exclusions,
       employeeTargetHours,
       employeeMaxHours,
+      fixedSlots: fixedSlotsForSolver,
     },
     postPreferences,
     shiftPreferences,

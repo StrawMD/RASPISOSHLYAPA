@@ -34,6 +34,8 @@ export interface SolverInput {
     exclusions?: Record<string, number[]>;
     employeeTargetHours?: Record<string, number>;
     employeeMaxHours?: Record<string, number>;
+    /** День (строка 1..31) → postId → список ячеек — жёстко заданные смены */
+    fixedSlots?: Record<string, Record<string, string[]>>;
   };
   postPreferences?: Record<string, Record<string, string>>;
   shiftPreferences?: Record<string, Record<string, boolean | null>>;
@@ -83,7 +85,15 @@ export async function runSolver(input: SolverInput): Promise<SolverOutput> {
     if (!jsonLine) {
       throw new Error(`Solver returned no JSON. Output: ${result.slice(0, 500)}`);
     }
-    const parsed = JSON.parse(jsonLine);
+    const parsed = JSON.parse(jsonLine) as {
+      error?: string;
+      messages?: string[];
+      schedule?: SolverOutput["schedule"];
+      employeeHours?: SolverOutput["employeeHours"];
+    };
+    if (parsed.error === "fixed_slots" && Array.isArray(parsed.messages)) {
+      throw new Error(parsed.messages.join("; "));
+    }
     if (parsed.error) {
       throw new Error(parsed.error);
     }

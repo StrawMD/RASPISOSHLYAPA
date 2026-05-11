@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -81,7 +82,12 @@ export default function GeneratePage() {
         <CardHeader>
           <CardTitle className="text-base">Параметры</CardTitle>
           <CardDescription>
-            Настройте параметры и запустите солвер
+            Настройте параметры и запустите солвер.
+            Жёстко заданные ячейки для месяца (только админ) настраиваются в{" "}
+            <Link href="/admin/fixed-slots" className="underline font-medium">
+              Фикс. слоты
+            </Link>
+            .
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
