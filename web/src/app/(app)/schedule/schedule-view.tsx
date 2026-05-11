@@ -21,7 +21,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { CalendarDays, List, BarChart3, FileDown } from "lucide-react";
+import { CalendarDays, List, BarChart3, FileDown, Table } from "lucide-react";
 
 const DAY_NAMES = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 const DAY_NAMES_FULL = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"];
@@ -30,8 +30,62 @@ const MONTH_NAMES = [
   "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
 ];
 
+const MONTH_ABBR_RU = [
+  "янв", "фев", "мар", "апр", "мая", "июн",
+  "июл", "авг", "сен", "окт", "ноя", "дек",
+] as const;
+
 type Post = { id: string; name: string; shiftHours: number; staffRequired: number };
 type Schedule = Record<string, Record<string, string[]>>;
+
+function csvEscape(cell: string): string {
+  if (/[;"\r\n]/.test(cell)) return `"${cell.replace(/"/g, '""')}"`;
+  return cell;
+}
+
+/** Таблица как в Google/Excel: `;`, UTF-8 BOM — открывается в Excel. */
+function buildScheduleCsv(
+  year: number,
+  month: number,
+  schedule: Schedule,
+  posts: Post[],
+  normHours: number | null
+): string {
+  const lines: string[] = [];
+  const numDays = new Date(year, month, 0).getDate();
+  const title =
+    normHours != null && normHours > 0
+      ? `${MONTH_NAMES[month - 1].toUpperCase()} ${normHours} ч`
+      : MONTH_NAMES[month - 1].toUpperCase();
+  const headerPosts = posts.map((p) => csvEscape(p.name)).join(";");
+  lines.push(`${title};;${headerPosts}`);
+
+  for (let d = 1; d <= numDays; d++) {
+    const dow =
+      DAY_NAMES[(new Date(year, month - 1, d).getDay() + 6) % 7];
+    const dateStr = `${String(d).padStart(2, "0")}.${MONTH_ABBR_RU[month - 1]}`;
+    const dayStr = String(d);
+    const dayData = schedule[dayStr] ?? {};
+    const cells = posts.map((p) => {
+      const arr = dayData[p.id] ?? [];
+      const text = arr.join(" ").trim();
+      return csvEscape(text);
+    });
+    lines.push([dateStr, dow, ...cells].join(";"));
+  }
+
+  return "\uFEFF" + lines.join("\r\n");
+}
+
+function downloadTextFile(content: string, filename: string, mime: string) {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  URL.revokeObjectURL(url);
+}
 
 interface Props {
   year: number;
@@ -40,6 +94,7 @@ interface Props {
   schedule: Schedule | null;
   employeeHours: Record<string, number> | null;
   posts: Post[];
+  normHours?: number | null;
   employeeName: string | null;
   userRole: string;
 }
@@ -64,6 +119,7 @@ export function ScheduleView({
   schedule,
   employeeHours,
   posts,
+  normHours,
   employeeName,
   userRole,
 }: Props) {
@@ -221,6 +277,31 @@ export function ScheduleView({
           >
             <FileDown className="h-4 w-4" />
             <span className="hidden sm:inline">Экспорт PDF</span>
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            type="button"
+            disabled={!schedule}
+            className="gap-1.5"
+            onClick={() => {
+              if (!schedule) return;
+              const csv = buildScheduleCsv(
+                year,
+                month,
+                schedule,
+                posts,
+                normHours ?? null
+              );
+              downloadTextFile(
+                csv,
+                `grafik_${year}_${String(month).padStart(2, "0")}.csv`,
+                "text/csv;charset=utf-8"
+              );
+            }}
+          >
+            <Table className="h-4 w-4" />
+            <span className="hidden sm:inline">Excel (CSV)</span>
           </Button>
         </div>
       </div>

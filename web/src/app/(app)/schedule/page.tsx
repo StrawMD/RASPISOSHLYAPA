@@ -78,6 +78,7 @@ export default async function SchedulePage({ searchParams }: Props) {
           : null
       }
       posts={posts}
+      normHours={monthRecord?.normHours ?? null}
       employeeName={session?.user?.name ?? null}
       userRole={session?.user?.role ?? "employee"}
     />
