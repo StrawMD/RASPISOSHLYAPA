@@ -83,6 +83,27 @@ function isShiftTimeMode(v: unknown): v is ShiftTimeMode {
   );
 }
 
+const CONSECUTIVE_OPTIONS = [
+  { value: "avoid", label: "Не люблю смены подряд" },
+  { value: "neutral", label: "Без разницы" },
+  { value: "prefer_2", label: "Лучше по 2 смены подряд" },
+  { value: "prefer_3", label: "Лучше по 3 смены подряд" },
+  { value: "prefer_4", label: "Лучше по 4 смены подряд" },
+] as const;
+
+const MEDICAL_OPTIONS = [
+  { value: "none", label: "Нет ограничений" },
+  { value: "no_night", label: "Нельзя ночные смены" },
+  { value: "no_24h", label: "Нельзя суточные (24ч)" },
+  { value: "day_only", label: "Только дневные смены" },
+] as const;
+
+const LOAD_OPTIONS = [
+  { value: "less", label: "Поменьше, чем обычно" },
+  { value: "normal", label: "Как обычно" },
+  { value: "more", label: "Побольше — готов(а) подработать" },
+] as const;
+
 /**
  * Backward-compat: derive the aggregate mode from the legacy per-24h-post
  * flags (pref24hFull/Day/Night).  Used when the explicit `shiftTimeMode`
@@ -129,7 +150,26 @@ interface Props {
     can24h: boolean;
     hospitalStartYear: number | null;
     careerStartYear: number | null;
+    consecutivePref: string;
+    medicalRestriction: string;
+    medicalNote: string | null;
+    recurringUnavailableDows: number[];
   };
+  coworkers: string[];
+  previous: {
+    shiftTimeMode: string | null;
+    postPreferences: Record<string, string>;
+    weekdayPref: string | null;
+    weekendPref: string | null;
+    dayOfWeekPrefs: Record<string, string>;
+    softUnavailableDays: number[];
+    consecutivePrefOverride: string | null;
+    loadPref: string | null;
+    maxNights: number | null;
+    maxFull: number | null;
+    avoidWith: string[];
+    preferWith: string[];
+  } | null;
   posts: Post[];
   has24hPostsInSystem: boolean;
   year: number;
@@ -150,6 +190,13 @@ interface Props {
     dayOfWeekPrefs: Record<string, string>;
     desiredDates: number[];
     comment: string | null;
+    softUnavailableDays: number[];
+    consecutivePrefOverride: string | null;
+    loadPref: string | null;
+    maxNights: number | null;
+    maxFull: number | null;
+    avoidWith: string[];
+    preferWith: string[];
   } | null;
 }
 
@@ -161,6 +208,8 @@ export function PreferencesForm({
   employeeId,
   employeeName,
   employee,
+  coworkers,
+  previous,
   posts,
   has24hPostsInSystem,
   year,
@@ -227,6 +276,37 @@ export function PreferencesForm({
     existing?.dayOfWeekPrefs ?? {},
   );
   const [comment, setComment] = useState(existing?.comment ?? "");
+
+  // Профильные (стабильные) поля.
+  const [consecutivePref, setConsecutivePref] = useState(
+    employee.consecutivePref || "avoid",
+  );
+  const [medicalRestriction, setMedicalRestriction] = useState(
+    employee.medicalRestriction || "none",
+  );
+  const [medicalNote, setMedicalNote] = useState(employee.medicalNote ?? "");
+  const [recurringDows, setRecurringDows] = useState<Set<number>>(
+    new Set(employee.recurringUnavailableDows ?? []),
+  );
+
+  // Месячные поля.
+  const [softUnavailable, setSoftUnavailable] = useState<Set<number>>(
+    new Set(existing?.softUnavailableDays ?? []),
+  );
+  const [loadPref, setLoadPref] = useState(existing?.loadPref ?? "normal");
+  const [maxNightsStr, setMaxNightsStr] = useState(
+    existing?.maxNights != null ? String(existing.maxNights) : "",
+  );
+  const [maxFullStr, setMaxFullStr] = useState(
+    existing?.maxFull != null ? String(existing.maxFull) : "",
+  );
+  const [avoidWith, setAvoidWith] = useState<string[]>(
+    existing?.avoidWith ?? [],
+  );
+  const [preferWith, setPreferWith] = useState<string[]>(
+    existing?.preferWith ?? [],
+  );
+
   const [isPending, startTransition] = useTransition();
 
   const isLocked = monthStatus !== "collecting";
@@ -289,6 +369,18 @@ export function PreferencesForm({
     setTargetRate((t) => Math.min(t, clamped));
   }
 
+  function removeFrom(
+    setter: React.Dispatch<React.SetStateAction<Set<number>>>,
+    day: number,
+  ) {
+    setter((p) => {
+      if (!p.has(day)) return p;
+      const n = new Set(p);
+      n.delete(day);
+      return n;
+    });
+  }
+
   function toggleUnavailable(day: number) {
     if (readOnly) return;
     setUnavailable((prev) => {
@@ -297,13 +389,23 @@ export function PreferencesForm({
         next.delete(day);
       } else {
         next.add(day);
-        if (desired.has(day)) {
-          setDesired((p) => {
-            const n = new Set(p);
-            n.delete(day);
-            return n;
-          });
-        }
+        removeFrom(setDesired, day);
+        removeFrom(setSoftUnavailable, day);
+      }
+      return next;
+    });
+  }
+
+  function toggleSoftUnavailable(day: number) {
+    if (readOnly) return;
+    setSoftUnavailable((prev) => {
+      const next = new Set(prev);
+      if (next.has(day)) {
+        next.delete(day);
+      } else {
+        next.add(day);
+        removeFrom(setDesired, day);
+        removeFrom(setUnavailable, day);
       }
       return next;
     });
@@ -317,16 +419,55 @@ export function PreferencesForm({
         next.delete(day);
       } else {
         next.add(day);
-        if (unavailable.has(day)) {
-          setUnavailable((p) => {
-            const n = new Set(p);
-            n.delete(day);
-            return n;
-          });
-        }
+        removeFrom(setUnavailable, day);
+        removeFrom(setSoftUnavailable, day);
       }
       return next;
     });
+  }
+
+  function toggleRecurringDow(idx: number) {
+    if (readOnly) return;
+    setRecurringDows((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
+      return next;
+    });
+  }
+
+  function toggleAvoidWith(name: string) {
+    if (readOnly) return;
+    setAvoidWith((prev) =>
+      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
+    );
+    setPreferWith((prev) => prev.filter((n) => n !== name));
+  }
+
+  function togglePreferWith(name: string) {
+    if (readOnly) return;
+    setPreferWith((prev) =>
+      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
+    );
+    setAvoidWith((prev) => prev.filter((n) => n !== name));
+  }
+
+  function copyFromPrevious() {
+    if (readOnly || !previous) return;
+    if (isShiftTimeMode(previous.shiftTimeMode)) {
+      setShiftTimeMode(previous.shiftTimeMode as ShiftTimeMode);
+    }
+    setPostPrefs(previous.postPreferences ?? {});
+    setWeekdayPref(previous.weekdayPref ?? "null");
+    setWeekendPref(previous.weekendPref ?? "null");
+    setDowPrefs(previous.dayOfWeekPrefs ?? {});
+    setSoftUnavailable(new Set(previous.softUnavailableDays ?? []));
+    setLoadPref(previous.loadPref ?? "normal");
+    setMaxNightsStr(previous.maxNights != null ? String(previous.maxNights) : "");
+    setMaxFullStr(previous.maxFull != null ? String(previous.maxFull) : "");
+    setAvoidWith(previous.avoidWith ?? []);
+    setPreferWith(previous.preferWith ?? []);
+    toast.success("Скопировано с прошлого месяца — проверьте и сохраните");
   }
 
   function getConsecutiveWarning(): string | null {
@@ -382,6 +523,10 @@ export function PreferencesForm({
           can24h,
           hospitalStartYear: hospitalParsed,
           careerStartYear: careerParsed,
+          consecutivePref,
+          medicalRestriction,
+          medicalNote: medicalNote.trim() || null,
+          recurringUnavailableDows: Array.from(recurringDows).sort((a, b) => a - b),
         }),
       });
 
@@ -397,6 +542,13 @@ export function PreferencesForm({
         for (const [pid, v] of Object.entries(postPrefs)) {
           if (visibleIds.has(pid)) filteredPostPrefs[pid] = v;
         }
+
+        const parseCap = (s: string): number | null => {
+          const t = s.trim();
+          if (!t) return null;
+          const n = parseInt(t, 10);
+          return Number.isNaN(n) || n < 0 ? null : n;
+        };
 
         const prefsRes = await fetch("/api/preferences", {
           method: "POST",
@@ -416,6 +568,12 @@ export function PreferencesForm({
             dayOfWeekPrefs: dowPrefs,
             desiredDates: Array.from(desired).sort((a, b) => a - b),
             comment: comment || null,
+            softUnavailableDays: Array.from(softUnavailable).sort((a, b) => a - b),
+            loadPref: loadPref === "normal" ? null : loadPref,
+            maxNights: parseCap(maxNightsStr),
+            maxFull: parseCap(maxFullStr),
+            avoidWith,
+            preferWith,
           }),
         });
 
@@ -470,6 +628,17 @@ export function PreferencesForm({
             изменятся, но профиль можно обновить.
           </CardContent>
         </Card>
+      )}
+
+      {previous && !readOnly && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={copyFromPrevious}
+          className="w-full sm:w-auto"
+        >
+          Скопировать с прошлого месяца
+        </Button>
       )}
 
       <Card>
@@ -612,6 +781,101 @@ export function PreferencesForm({
         </CardContent>
       </Card>
 
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">
+            Очерёдность смен и ограничения
+          </CardTitle>
+          <CardDescription>
+            Как вам удобнее чередовать смены и есть ли медицинские/правовые
+            ограничения.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>Смены подряд</Label>
+            <Select
+              value={consecutivePref}
+              onValueChange={(v) => v && setConsecutivePref(v)}
+              disabled={readOnly}
+            >
+              <SelectTrigger className="w-full sm:w-80">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {CONSECUTIVE_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] text-muted-foreground">
+              Кто-то не любит работать в соседние дни, а кому-то удобнее
+              «блоками» — несколько смен подряд, потом длинный отдых.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Медицинские / правовые ограничения</Label>
+            <Select
+              value={medicalRestriction}
+              onValueChange={(v) => v && setMedicalRestriction(v)}
+              disabled={readOnly}
+            >
+              <SelectTrigger className="w-full sm:w-80">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {MEDICAL_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {medicalRestriction !== "none" && (
+              <>
+                <Input
+                  placeholder="Комментарий (необязательно): напр. лёгкий труд до…"
+                  value={medicalNote}
+                  onChange={(e) => setMedicalNote(e.target.value)}
+                  disabled={readOnly}
+                  className="mt-2"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  Это <strong>жёсткое</strong> ограничение — такие смены вам
+                  ставиться не будут.
+                </p>
+              </>
+            )}
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Регулярно недоступен по дням недели</Label>
+            <div className="flex flex-wrap gap-3">
+              {DAY_NAMES.map((name, i) => (
+                <label
+                  key={name}
+                  className="flex items-center gap-1.5 text-sm cursor-pointer"
+                >
+                  <Checkbox
+                    checked={recurringDows.has(i)}
+                    disabled={readOnly}
+                    onCheckedChange={() => toggleRecurringDow(i)}
+                  />
+                  {name}
+                </label>
+              ))}
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Напр. учёба/кафедра каждый вторник — эти дни всегда будут выходными
+              (можно не отмечать вручную каждый раз).
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
       {has24h && (
         <Card>
           <CardHeader className="pb-2">
@@ -714,6 +978,68 @@ export function PreferencesForm({
           </CardContent>
         </Card>
       )}
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">Нагрузка в этом месяце</CardTitle>
+          <CardDescription>
+            Разовое пожелание именно на {MONTH_NAMES[month - 1]} — не меняет
+            вашу постоянную ставку.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>Хочу работать</Label>
+            <Select
+              value={loadPref}
+              onValueChange={(v) => v && setLoadPref(v)}
+              disabled={readOnly}
+            >
+              <SelectTrigger className="w-full sm:w-80">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {LOAD_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {has24h && (
+            <div className="grid gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label>Не больше суточных (с) за месяц</Label>
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="без лимита"
+                  value={maxFullStr}
+                  onChange={(e) =>
+                    setMaxFullStr(e.target.value.replace(/\D/g, "").slice(0, 2))
+                  }
+                  disabled={readOnly}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>Не больше ночных (н) за месяц</Label>
+                <Input
+                  type="text"
+                  inputMode="numeric"
+                  placeholder="без лимита"
+                  value={maxNightsStr}
+                  onChange={(e) =>
+                    setMaxNightsStr(e.target.value.replace(/\D/g, "").slice(0, 2))
+                  }
+                  disabled={readOnly}
+                />
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader className="pb-2">
@@ -910,6 +1236,94 @@ export function PreferencesForm({
 
       <Card>
         <CardHeader className="pb-2">
+          <CardTitle className="text-base">
+            Дни, когда лучше не ставить (мягко)
+          </CardTitle>
+          <CardDescription>
+            В отличие от «не могу» — это не запрет: солвер постарается не ставить
+            смену, но может, если иначе график не сходится. Отмечено:{" "}
+            {softUnavailable.size}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-7 gap-px text-center text-xs font-medium text-muted-foreground mb-1">
+            {DAY_NAMES.map((d) => (
+              <div key={d} className="py-0.5">
+                {d}
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-7 gap-1">
+            {cells.map((day, i) => {
+              if (day === null) return <div key={`e3-${i}`} className="h-8" />;
+              const isSoft = softUnavailable.has(day);
+              const isHard = unavailable.has(day);
+              const isDes = desired.has(day);
+              const blocked = isHard || isDes;
+              return (
+                <button
+                  key={day}
+                  onClick={() => toggleSoftUnavailable(day)}
+                  disabled={readOnly || blocked}
+                  title={
+                    isHard
+                      ? "День помечен как «не могу»"
+                      : isDes
+                        ? "День помечен как желаемый"
+                        : undefined
+                  }
+                  className={`h-8 rounded text-xs font-medium transition-colors ${
+                    isSoft
+                      ? "bg-amber-500/30 text-amber-300 ring-1 ring-amber-500/50"
+                      : blocked
+                        ? "bg-muted/20 text-muted-foreground/40 cursor-not-allowed"
+                        : "bg-muted/30 hover:bg-muted"
+                  } ${readOnly ? "cursor-default" : ""}`}
+                >
+                  {day}
+                </button>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
+      {coworkers.length > 0 && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Пожелания по коллегам</CardTitle>
+            <CardDescription>
+              Необязательно. «Не ставить вместе» учитывается жёстче, «хочу
+              вместе» — как мягкое пожелание (напр. работа с наставником).
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-[1fr_auto_auto] gap-x-3 gap-y-1 items-center text-sm">
+              <div className="text-xs text-muted-foreground" />
+              <div className="text-[11px] text-muted-foreground text-center w-20">
+                Не вместе
+              </div>
+              <div className="text-[11px] text-muted-foreground text-center w-20">
+                Хочу вместе
+              </div>
+              {coworkers.map((name) => (
+                <FragmentRow
+                  key={name}
+                  name={name}
+                  avoid={avoidWith.includes(name)}
+                  prefer={preferWith.includes(name)}
+                  readOnly={readOnly}
+                  onAvoid={() => toggleAvoidWith(name)}
+                  onPrefer={() => togglePreferWith(name)}
+                />
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      <Card>
+        <CardHeader className="pb-2">
           <CardTitle className="text-base">Комментарий</CardTitle>
         </CardHeader>
         <CardContent>
@@ -935,5 +1349,37 @@ export function PreferencesForm({
             : "Сохранить"}
       </Button>
     </div>
+  );
+}
+
+function FragmentRow({
+  name,
+  avoid,
+  prefer,
+  readOnly,
+  onAvoid,
+  onPrefer,
+}: {
+  name: string;
+  avoid: boolean;
+  prefer: boolean;
+  readOnly: boolean;
+  onAvoid: () => void;
+  onPrefer: () => void;
+}) {
+  return (
+    <>
+      <span className="truncate border-t py-1.5">{name}</span>
+      <div className="flex justify-center border-t py-1.5 w-20">
+        <Checkbox checked={avoid} disabled={readOnly} onCheckedChange={onAvoid} />
+      </div>
+      <div className="flex justify-center border-t py-1.5 w-20">
+        <Checkbox
+          checked={prefer}
+          disabled={readOnly}
+          onCheckedChange={onPrefer}
+        />
+      </div>
+    </>
   );
 }

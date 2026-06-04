@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { runSolver, SolverInput } from "@/lib/solver-bridge";
+import { runSolver, SolverInput, SolverInfeasibleError } from "@/lib/solver-bridge";
 import { computeTenure } from "@/lib/seniority";
 import { prismaSchemaHint } from "@/lib/prisma-schema-hint";
 import { validateFixedSlots } from "@/lib/validate-fixed-slots";
@@ -24,6 +24,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const { year, month, normHours, timeLimit, seniorityFilter, versionName } =
     body;
+  const relax = Boolean(body.relax);
 
   const posts = await prisma.post.findMany({ orderBy: { sortOrder: "asc" } });
   const employees = await prisma.employee.findMany();
@@ -164,6 +165,14 @@ export async function POST(req: NextRequest) {
   const weekendPrefs: Record<string, string> = {};
   const dowPrefs: Record<string, Record<string, string>> = {};
   const desiredDates: Record<string, number[]> = {};
+  const softUnavailableDays: Record<string, number[]> = {};
+  const avoidWith: Record<string, string[]> = {};
+  const preferWith: Record<string, string[]> = {};
+  // Месячные переопределения (имя сотрудника → значение).
+  const consecutiveOverride: Record<string, string> = {};
+  const loadPrefByName: Record<string, string> = {};
+  const maxNightsByName: Record<string, number> = {};
+  const maxFullByName: Record<string, number> = {};
 
   function deriveLegacyShiftTimeMode(
     full: string | null,
@@ -236,6 +245,36 @@ export async function POST(req: NextRequest) {
       for (const d of prefUnavail) existing.add(d);
       absences[emp.name] = Array.from(existing).sort((a, b) => a - b);
     }
+
+    const softDays: number[] = safeJson(pref.softUnavailableDays, []);
+    if (softDays.length > 0) softUnavailableDays[emp.name] = softDays;
+
+    const aw: string[] = safeJson(pref.avoidWith, []);
+    if (aw.length > 0) avoidWith[emp.name] = aw;
+    const pw: string[] = safeJson(pref.preferWith, []);
+    if (pw.length > 0) preferWith[emp.name] = pw;
+
+    if (pref.consecutivePrefOverride) {
+      consecutiveOverride[emp.name] = pref.consecutivePrefOverride;
+    }
+    if (pref.loadPref) loadPrefByName[emp.name] = pref.loadPref;
+    if (typeof pref.maxNights === "number") maxNightsByName[emp.name] = pref.maxNights;
+    if (typeof pref.maxFull === "number") maxFullByName[emp.name] = pref.maxFull;
+  }
+
+  // Регулярная недельная недоступность (профиль) → раскрываем в дни месяца.
+  for (const emp of employees) {
+    const dows: number[] = safeJson(emp.recurringUnavailableDows, []);
+    if (dows.length === 0) continue;
+    const dowSet = new Set(dows);
+    const existing = new Set(absences[emp.name] ?? []);
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dow = (new Date(year, month - 1, d).getDay() + 6) % 7; // 0=Пн
+      if (dowSet.has(dow)) existing.add(d);
+    }
+    if (existing.size > 0) {
+      absences[emp.name] = Array.from(existing).sort((a, b) => a - b);
+    }
   }
 
   for (const emp of employees) {
@@ -255,10 +294,25 @@ export async function POST(req: NextRequest) {
     const absentDays = (absences[emp.name] ?? []).length;
     const avail = Math.max(0, (daysInMonth - absentDays) / daysInMonth);
     const target = emp.targetRate ?? emp.rate;
-    const boundedTarget = Math.min(Math.max(target, emp.rate), emp.maxRate);
+    let boundedTarget = Math.min(Math.max(target, emp.rate), emp.maxRate);
+    // Желаемая нагрузка на месяц: мягко двигаем цель в пределах [0.25, maxRate].
+    const load = loadPrefByName[emp.name];
+    if (load === "more") {
+      boundedTarget = Math.min(emp.maxRate, boundedTarget + 0.25);
+    } else if (load === "less") {
+      boundedTarget = Math.max(0.25, boundedTarget - 0.25);
+    }
     employeeTargetHours[emp.name] = nh * boundedTarget * avail;
     employeeMaxHours[emp.name] = nh * emp.maxRate * avail;
   }
+
+  // Веса целевой функции из настроек (если заданы); иначе дефолты в солвере.
+  const weightsSetting = await prisma.setting.findUnique({
+    where: { key: "solverWeights" },
+  });
+  const solverWeights = weightsSetting
+    ? safeJson<Record<string, number>>(weightsSetting.value, {})
+    : {};
 
   /** Актуальные фиксы из БД (не только снимок в начале запроса). */
   const monthRow = await prisma.month.findUnique({
@@ -304,6 +358,8 @@ export async function POST(req: NextRequest) {
     })),
     employees: employees.map((e) => {
       const t = computeTenure(e, year);
+      const effectiveConsecutive =
+        consecutiveOverride[e.name] ?? e.consecutivePref ?? "avoid";
       return {
         name: e.name,
         rate: e.rate,
@@ -313,6 +369,11 @@ export async function POST(req: NextRequest) {
         hospitalYears: t.hospitalYears,
         careerYears: t.careerYears,
         seniorityScore: t.score,
+        consecutivePref: effectiveConsecutive,
+        medicalRestriction: e.medicalRestriction ?? "none",
+        can24h: e.can24h,
+        maxNights: maxNightsByName[e.name] ?? null,
+        maxFull: maxFullByName[e.name] ?? null,
       };
     }),
     config: {
@@ -335,6 +396,11 @@ export async function POST(req: NextRequest) {
     weekendPrefs,
     dowPrefs,
     desiredDates,
+    softUnavailableDays,
+    avoidWith,
+    preferWith,
+    weights: Object.keys(solverWeights).length > 0 ? solverWeights : undefined,
+    relax,
   };
 
     const result = await runSolver(solverInput);
@@ -348,11 +414,19 @@ export async function POST(req: NextRequest) {
       data: { normHours: nh },
     });
 
+    const relaxedDraft = Boolean(result.relaxed);
+    const unfilled = result.unfilled ?? [];
+    const unfilledCount = result.unfilledCount ?? 0;
+    const baseName = versionName || `Версия ${versionCount + 1}`;
+    const finalName = relaxedDraft
+      ? `${baseName} (черновик с пропусками: ${unfilledCount})`
+      : baseName;
+
     const version = await prisma.scheduleVersion.create({
       data: {
         monthId: monthRecord.id,
         versionNumber: versionCount + 1,
-        name: versionName || `Версия ${versionCount + 1}`,
+        name: finalName,
         status: "draft",
         data: JSON.stringify(result.schedule),
         employeeHours: JSON.stringify(result.employeeHours),
@@ -361,6 +435,9 @@ export async function POST(req: NextRequest) {
           timeLimit,
           seniorityFilter,
           fixedSlotsApplied: fixedSlotsCount,
+          relaxed: relaxedDraft,
+          unfilled,
+          unfilledCount,
         }),
         createdById: session.user.id,
       },
@@ -373,10 +450,19 @@ export async function POST(req: NextRequest) {
       employeeHours: result.employeeHours,
       fixedSlotsApplied: fixedSlotsCount,
       status: "draft",
+      relaxed: relaxedDraft,
+      unfilled,
+      unfilledCount,
     });
   } catch (e: unknown) {
     console.error("[api/schedule/generate]", e);
-    let message =
+    if (e instanceof SolverInfeasibleError) {
+      return NextResponse.json(
+        { error: e.message, diagnostics: e.diagnostics, infeasible: true },
+        { status: 422 },
+      );
+    }
+    const message =
       prismaSchemaHint(e) ??
       (e instanceof Error ? e.message : "Unknown error");
     return NextResponse.json({ error: message }, { status: 500 });

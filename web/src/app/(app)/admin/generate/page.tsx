@@ -36,11 +36,16 @@ export default function GeneratePage() {
     versionNumber: number;
     employeeHours: Record<string, number>;
     fixedSlotsApplied?: number;
+    relaxed?: boolean;
+    unfilled?: { post: string; day: number; kind: string; count: number }[];
+    unfilledCount?: number;
   } | null>(null);
+  const [diagnostics, setDiagnostics] = useState<string[] | null>(null);
 
-  async function handleGenerate() {
+  async function handleGenerate(relax = false) {
     setLoading(true);
     setResult(null);
+    setDiagnostics(null);
 
     try {
       const res = await fetch("/api/schedule/generate", {
@@ -53,13 +58,19 @@ export default function GeneratePage() {
           timeLimit,
           seniorityFilter,
           versionName: versionName || undefined,
+          relax,
         }),
       });
 
       const data = await res.json();
 
       if (!res.ok) {
-        toast.error(data.error || "Ошибка генерации");
+        if (data.infeasible && Array.isArray(data.diagnostics)) {
+          setDiagnostics(data.diagnostics);
+          toast.error("Расписание не сошлось — см. причины ниже");
+        } else {
+          toast.error(data.error || "Ошибка генерации");
+        }
         return;
       }
 
@@ -67,13 +78,22 @@ export default function GeneratePage() {
         versionNumber: data.versionNumber,
         employeeHours: data.employeeHours,
         fixedSlotsApplied: data.fixedSlotsApplied,
+        relaxed: data.relaxed,
+        unfilled: data.unfilled,
+        unfilledCount: data.unfilledCount,
       });
       const fs = typeof data.fixedSlotsApplied === "number" ? data.fixedSlotsApplied : 0;
-      toast.success(
-        fs > 0
-          ? `Черновик v${data.versionNumber}: учтено фиксированных ячеек — ${fs}. На общей странице «Расписание» видна только опубликованная версия: откройте «Версии» и опубликуйте черновик или «Редактор».`
-          : `Черновик v${data.versionNumber} создан без фиксов месяца (JSON в «Фикс. слоты» пуст или другой месяц). Опубликуйте в «Версии», чтобы обновить общее расписание.`
-      );
+      if (data.relaxed) {
+        toast.success(
+          `Черновик с пропусками v${data.versionNumber}: незакрытых позиций — ${data.unfilledCount ?? 0}. Список ниже.`,
+        );
+      } else {
+        toast.success(
+          fs > 0
+            ? `Черновик v${data.versionNumber}: учтено фиксированных ячеек — ${fs}. На общей странице «Расписание» видна только опубликованная версия: откройте «Версии» и опубликуйте черновик или «Редактор».`
+            : `Черновик v${data.versionNumber} создан без фиксов месяца (JSON в «Фикс. слоты» пуст или другой месяц). Опубликуйте в «Версии», чтобы обновить общее расписание.`,
+        );
+      }
     } catch {
       toast.error("Ошибка соединения");
     } finally {
@@ -180,7 +200,7 @@ export default function GeneratePage() {
           </label>
 
           <Button
-            onClick={handleGenerate}
+            onClick={() => handleGenerate(false)}
             disabled={loading}
             size="lg"
             className="w-full sm:w-auto"
@@ -200,14 +220,86 @@ export default function GeneratePage() {
         </CardContent>
       </Card>
 
-      {result && (
-        <Card className="border-green-200 bg-green-50 dark:bg-green-950/20">
+      {diagnostics && (
+        <Card className="border-red-200 bg-red-50 dark:bg-red-950/20">
           <CardHeader>
-            <CardTitle className="text-base text-green-700 dark:text-green-400">
-              Версия {result.versionNumber} создана
+            <CardTitle className="text-base text-red-700 dark:text-red-400">
+              Расписание не удалось составить
+            </CardTitle>
+            <CardDescription>
+              Солвер не нашёл решения с текущими ограничениями. Вероятные
+              причины:
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <ul className="list-disc pl-5 space-y-1 text-sm">
+              {diagnostics.length === 0 ? (
+                <li className="text-muted-foreground">
+                  Точную причину определить не удалось. Проверьте отпуска,
+                  лимиты ставок и требования к покрытию постов.
+                </li>
+              ) : (
+                diagnostics.map((d, i) => <li key={i}>{d}</li>)
+              )}
+            </ul>
+            <div className="mt-4 flex items-center gap-3 flex-wrap">
+              <Button
+                variant="outline"
+                disabled={loading}
+                onClick={() => handleGenerate(true)}
+              >
+                {loading ? (
+                  <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                ) : null}
+                Составить черновик с пропусками
+              </Button>
+              <span className="text-xs text-muted-foreground">
+                Солвер закроет максимум позиций и честно покажет, что осталось
+                незакрытым.
+              </span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {result && (
+        <Card
+          className={
+            result.relaxed
+              ? "border-amber-200 bg-amber-50 dark:bg-amber-950/20"
+              : "border-green-200 bg-green-50 dark:bg-green-950/20"
+          }
+        >
+          <CardHeader>
+            <CardTitle
+              className={
+                result.relaxed
+                  ? "text-base text-amber-700 dark:text-amber-400"
+                  : "text-base text-green-700 dark:text-green-400"
+              }
+            >
+              {result.relaxed
+                ? `Версия ${result.versionNumber}: черновик с пропусками (${result.unfilledCount ?? 0})`
+                : `Версия ${result.versionNumber} создана`}
             </CardTitle>
           </CardHeader>
           <CardContent>
+            {result.relaxed &&
+              result.unfilled &&
+              result.unfilled.length > 0 && (
+                <div className="mb-3 rounded border border-amber-300 bg-background/60 p-3">
+                  <p className="text-sm font-medium mb-1.5">
+                    Незакрытые позиции:
+                  </p>
+                  <ul className="list-disc pl-5 space-y-0.5 text-sm">
+                    {result.unfilled.map((u, i) => (
+                      <li key={i}>
+                        {u.post}, день {u.day}: не закрыто ({u.kind}) — {u.count}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             <p className="text-sm text-muted-foreground mb-2">
               Это <strong>черновик</strong> — на странице «Расписание» для
               сотрудников по-прежнему показывается только{" "}

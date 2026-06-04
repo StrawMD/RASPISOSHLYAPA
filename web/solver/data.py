@@ -62,6 +62,15 @@ class Employee:
     hospital_years: int = 0            # стаж именно в больнице
     career_years: int = 0              # общий стаж в профессии
     seniority_score: int = 0           # взвешенный скор = 3*hospital + external
+    # Очерёдность смен: avoid | neutral | prefer_2 | prefer_3 | prefer_4
+    consecutive_pref: str = "avoid"
+    # Жёсткое мед/правовое ограничение: none | no_night | no_24h | day_only
+    medical_restriction: str = "none"
+    # Допуск на суточные (24ч) смены. False → суточные (с) и ночные (н) запрещены.
+    can_24h: bool = True
+    # Личные лимиты за месяц (None = без лимита)
+    max_nights: int | None = None
+    max_full: int | None = None
 
     def __hash__(self):
         return hash(self.name)
@@ -193,14 +202,20 @@ def generate_month_config(
     exclusions: dict[str, list[int]] | None = None,
     employee_target_hours: dict[str, float] | None = None,
     employee_max_hours: dict[str, float] | None = None,
+    posts: list[Post] | None = None,
 ) -> MonthConfig:
-    """Генерация конфига на месяц с дефолтными активными днями для каждого поста."""
+    """Генерация конфига на месяц с дефолтными активными днями для каждого поста.
+
+    `posts` берётся из БД (передаётся вызывающей стороной); если не передан —
+    используется захардкоженный список POSTS (обратная совместимость).
+    """
 
     norm = norm_hours if norm_hours is not None else compute_norm_hours(year, month)
     _, num_days = calendar.monthrange(year, month)
+    posts = posts if posts is not None else POSTS
 
     post_active: dict[str, list[int]] = {}
-    for post in POSTS:
+    for post in posts:
         active = []
         for d in range(1, num_days + 1):
             dt = date(year, month, d)

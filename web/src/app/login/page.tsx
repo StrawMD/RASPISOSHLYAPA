@@ -41,7 +41,7 @@ export default function LoginPage() {
       return;
     }
 
-    router.push("/schedule");
+    router.push("/");
     router.refresh();
   }
 

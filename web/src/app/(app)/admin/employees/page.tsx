@@ -28,6 +28,10 @@ export default async function EmployeesPage() {
         modalities: safeJson(e.modalities, []),
         can24h: e.can24h ?? false,
         postPreferences: safeJson(e.postPreferences, {}),
+        consecutivePref: e.consecutivePref ?? "avoid",
+        medicalRestriction: e.medicalRestriction ?? "none",
+        medicalNote: e.medicalNote,
+        recurringUnavailableDows: safeJson(e.recurringUnavailableDows, []),
       }))}
       posts={posts.map((p) => ({
         id: p.id,

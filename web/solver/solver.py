@@ -38,6 +38,35 @@ def _log(*args, **kwargs):
     print(*args, file=sys.stderr, **kwargs)
 
 
+# Веса целевой функции. Значения по умолчанию совпадают с историческими
+# константами, поэтому без переданного конфига поведение не меняется.
+# Любой вес можно обнулить (0) — это эквивалентно выключению фактора.
+DEFAULT_WEIGHTS: dict[str, int] = {
+    "under_hours": 500,          # штраф за час недобора до целевых часов
+    "over_hours": 200,           # штраф за час переработки сверх цели
+    "consec_avoid": 1000,        # штраф за пару смен подряд (pref=avoid)
+    "block_reward": 150,         # награда за смежность смен (pref=prefer_N)
+    "overrun_penalty": 800,      # штраф за серию длиннее N (pref=prefer_N)
+    "rest2": 80,                 # желателен 2-й день отдыха после суток/ночи
+    "full_reward": 500,          # награда за монолитные сутки (с)
+    "partial_penalty": 200,      # штраф за дробление суток на (д)+(н)
+    "post_prefer": 30,           # база: предпочитаемый пост
+    "post_avoid": 50,            # база: нежелательный пост
+    "legacy_24h_prefer": 120,    # легаси: «предпочитаю» по типам 24ч-смен
+    "shift_time_bias": 600,      # сила режима prefer_full / prefer_day
+    "weekend_fairness": 30,      # равномерность выходных между людьми
+    "weekday_prefer": 10,        # база: предпочтение будней/выходных (prefer)
+    "weekday_avoid": 30,         # база: избегание будней/выходных (avoid)
+    "dow_prefer": 10,            # база: предпочтение по дню недели
+    "dow_avoid": 25,             # база: избегание по дню недели
+    "desired_date": 20,          # база: желаемая дата
+    "soft_unavailable": 200,     # штраф за работу в «мягко нежелательный» день
+    "avoid_with": 300,           # штраф за совместную смену с нежелательным коллегой
+    "prefer_with": 40,           # награда за совместную смену с желаемым коллегой
+    "understaff": 100000,        # релаксация: штраф за каждый незакрытый слот
+}
+
+
 class ScheduleSolver:
 
     def __init__(
@@ -53,7 +82,12 @@ class ScheduleSolver:
         weekend_prefs: dict[str, str] | None = None,
         dow_prefs: dict[str, dict[str, str]] | None = None,
         desired_dates: dict[str, list[int]] | None = None,
+        soft_unavailable: dict[str, list[int]] | None = None,
+        avoid_with: dict[str, list[str]] | None = None,
+        prefer_with: dict[str, list[str]] | None = None,
+        weights: dict[str, int] | None = None,
         fixed_slots: dict[int, dict[str, list[str]]] | None = None,
+        relax: bool = False,
     ):
         self.posts = posts
         self.employees = employees
@@ -66,7 +100,21 @@ class ScheduleSolver:
         self.weekend_prefs = weekend_prefs or {}
         self.dow_prefs = dow_prefs or {}
         self.desired_dates = desired_dates or {}
+        self.soft_unavailable = soft_unavailable or {}
+        self.avoid_with = avoid_with or {}
+        self.prefer_with = prefer_with or {}
         self.fixed_slots = fixed_slots or {}
+        # Режим релаксации: покрытие становится мягким (допускается недобор
+        # с большим штрафом), солвер всегда выдаёт черновик + список «дыр».
+        self.relax = relax
+        self.shortfalls: list[tuple] = []
+
+        self.W = dict(DEFAULT_WEIGHTS)
+        if weights:
+            for k, v in weights.items():
+                if k in self.W and isinstance(v, (int, float)):
+                    self.W[k] = int(v)
+
         self.model = cp_model.CpModel()
 
         self.x: dict[tuple[int, int, int], cp_model.IntVar] = {}
@@ -78,6 +126,8 @@ class ScheduleSolver:
             i for i, p in enumerate(self.posts) if p.shift_hours == 24
         )
         self._penalties: list = []
+        self.diagnostics: list[str] = []
+        self._worked: dict[tuple[int, int], cp_model.IntVar | None] = {}
         self._build()
 
     # ------------------------------------------------------------------
@@ -110,6 +160,20 @@ class ScheduleSolver:
                     vs.append(self.x[e, d, p])
         return vs
 
+    def _worked_var(self, e: int, d: int):
+        """Bool «сотрудник e работает в день d» (с кэшированием)."""
+        key = (e, d)
+        if key in self._worked:
+            return self._worked[key]
+        vs = self._all_vars_day(e, d)
+        if not vs:
+            self._worked[key] = None
+            return None
+        w = self.model.new_bool_var(f"wk_{e}_{d}")
+        self.model.add_max_equality(w, vs)
+        self._worked[key] = w
+        return w
+
     def _hour_terms(self, e: int) -> list:
         terms = []
         for d in self.config.days:
@@ -137,8 +201,9 @@ class ScheduleSolver:
         self._one_shift_per_day()
         self._rest_constraints()
         self._max_hours()
+        self._personal_shift_caps()
         self._hour_target_penalty()
-        self._no_consecutive_shifts()
+        self._consecutive_sequencing()
         self._prefer_2day_rest()
         self._prefer_full_shifts()
         self._post_preference_penalty()
@@ -148,6 +213,8 @@ class ScheduleSolver:
         self._weekday_weekend_penalty()
         self._day_of_week_penalty()
         self._desired_dates_bonus()
+        self._soft_unavailable_penalty()
+        self._pairing_penalty()
 
         if self._penalties:
             self.model.Minimize(sum(self._penalties))
@@ -167,6 +234,9 @@ class ScheduleSolver:
             emp_blocked = blocked.get(emp.name, set())
             sp = self.shift_prefs.get(emp.name, {})
             mode = self.shift_time_modes.get(emp.name, "neutral")
+            med = getattr(emp, "medical_restriction", "none") or "none"
+            no_night = med in ("no_night", "day_only")
+            no_full = med in ("no_24h", "no_night", "day_only")
 
             for d in self.config.days:
                 if d in emp_blocked:
@@ -178,19 +248,23 @@ class ScheduleSolver:
                         continue
 
                     if p in self._24h_pidxs:
-                        # Full-shift eligibility: seniority filter or legacy
-                        # `avoid` flag.  "only_full" keeps xf — it's other
-                        # shifts that are blocked in that mode.
+                        # Full-shift (с) eligibility. Blocked by: стаж-фильтр,
+                        # легаси-флаг avoid, отсутствие допуска на сутки
+                        # (can_24h=False) или мед-ограничение. "only_full"
+                        # сохраняет xf — в этом режиме блокируются прочие смены.
                         can_full = True
                         if self.seniority_filter and emp.hospital_years < 5:
                             can_full = False
                         if sp.get("pref_24h_full") is False:
                             can_full = False
+                        if not getattr(emp, "can_24h", True):
+                            can_full = False
+                        if no_full:
+                            can_full = False
 
-                        # Hard blocks only for legacy "avoid" flags and the
-                        # aggregate "only_full" mode.  Soft modes
-                        # ("prefer_full", "prefer_day") bias via penalties in
-                        # `_shift_time_mode_penalty`.
+                        # Жёсткие блокировки: легаси avoid, режим only_full,
+                        # либо мед-ограничение на ночь. Мягкие режимы
+                        # (prefer_full / prefer_day) — через штрафы.
                         block_day = (
                             sp.get("pref_24h_day") is False
                             or mode == "only_full"
@@ -198,6 +272,7 @@ class ScheduleSolver:
                         block_night = (
                             sp.get("pref_24h_night") is False
                             or mode == "only_full"
+                            or no_night
                         )
 
                         if can_full:
@@ -328,18 +403,22 @@ class ScheduleSolver:
                     if len(day_emps) < S_day:
                         _log(f"  ⚠  {post.name} день {d}: "
                              f"дневное покрытие {len(day_emps)}/{S_day}")
+                        self.diagnostics.append(
+                            f"{post.name}, день {d}: некем закрыть день "
+                            f"(доступно {len(day_emps)} из {S_day})")
                     if len(night_emps) < S_night:
                         _log(f"  ⚠  {post.name} день {d}: "
                              f"ночное покрытие {len(night_emps)}/{S_night}")
+                        self.diagnostics.append(
+                            f"{post.name}, день {d}: некем закрыть ночь "
+                            f"(доступно {len(night_emps)} из {S_night})")
 
                     all_day = f_vars + d_vars
                     all_night = f_vars + n_vars
-                    if all_day:
-                        self.model.add(
-                            sum(all_day) == min(S_day, len(day_emps)))
-                    if all_night:
-                        self.model.add(
-                            sum(all_night) == min(S_night, len(night_emps)))
+                    self._cover_target(all_day, S_day, len(day_emps),
+                                       post, d, "день")
+                    self._cover_target(all_night, S_night, len(night_emps),
+                                       post, d, "ночь")
                 else:
                     S = post.staff_required
                     assigned = [self.x[e, d, p]
@@ -349,9 +428,32 @@ class ScheduleSolver:
                     if n < S:
                         _log(f"  ⚠  {post.name} день {d}: "
                              f"доступно {n}, нужно {S}")
-                    if n == 0:
-                        continue
-                    self.model.add(sum(assigned) == min(S, n))
+                        self.diagnostics.append(
+                            f"{post.name}, день {d}: доступно {n}, нужно {S}")
+                    self._cover_target(assigned, S, n, post, d, "смена")
+
+    def _cover_target(self, assigned, required, available, post, d, kind):
+        """Ограничение покрытия одного слота.
+
+        Обычный режим: жёстко закрыть min(required, available) позиций.
+        Режим релаксации: стремиться к полному `required`, но допускать
+        недобор `shortfall` с большим штрафом и регистрировать «дыру».
+        """
+        if not self.relax:
+            if not assigned:
+                return
+            self.model.add(sum(assigned) == min(required, available))
+            return
+
+        # Релаксация: required может превышать число доступных переменных —
+        # тогда недобор неизбежен и будет отражён в отчёте.
+        short = self.model.new_int_var(0, required, f"short_{post.id}_{d}_{kind}")
+        if assigned:
+            self.model.add(sum(assigned) + short == required)
+        else:
+            self.model.add(short == required)
+        self._penalties.append(self.W["understaff"] * short)
+        self.shortfalls.append((post, d, kind, short))
 
     def _one_shift_per_day(self):
         for e in range(len(self.employees)):
@@ -401,28 +503,87 @@ class ScheduleSolver:
             over = self.model.new_int_var(0, 500, f"over_{e}")
             under = self.model.new_int_var(0, 500, f"under_{e}")
             self.model.add(total - target == over - under)
-            self._penalties.append(500 * under)
-            self._penalties.append(200 * over)
+            self._penalties.append(self.W["under_hours"] * under)
+            self._penalties.append(self.W["over_hours"] * over)
 
-    def _no_consecutive_shifts(self):
+    def _personal_shift_caps(self):
+        """Жёсткие личные лимиты на число суточных (с) и ночных (н) за месяц."""
+        for e, emp in enumerate(self.employees):
+            mf = getattr(emp, "max_full", None)
+            mn = getattr(emp, "max_nights", None)
+            if mf is not None and mf >= 0:
+                fvars = [v for (ee, _d, _p), v in self.xf.items() if ee == e]
+                if fvars:
+                    self.model.add(sum(fvars) <= mf)
+            if mn is not None and mn >= 0:
+                nvars = [v for (ee, _d, _p), v in self.xn.items() if ee == e]
+                if nvars:
+                    self.model.add(sum(nvars) <= mn)
+
+    def _consecutive_sequencing(self):
+        """Персональная очерёдность смен.
+
+          avoid (по умолчанию) — штраф за любые две смены подряд.
+          neutral             — без штрафа.
+          prefer_N (N=2..4)   — поощряем серии до N смен подряд, штрафуем
+                                 серии длиннее N.
+
+        Замечание: жёсткий отдых после суток (с) и ночи (н) сохраняется
+        всегда, поэтому очерёдность реально влияет на дневные 12ч-смены.
+        """
         days = self.config.days
-        for e in range(len(self.employees)):
-            for i in range(len(days) - 1):
-                d, dn = days[i], days[i + 1]
-                today = self._all_vars_day(e, d)
-                tomorrow = self._all_vars_day(e, dn)
-                if not today or not tomorrow:
+        for e, emp in enumerate(self.employees):
+            pref = getattr(emp, "consecutive_pref", "avoid") or "avoid"
+
+            if pref == "neutral":
+                continue
+
+            if pref.startswith("prefer_"):
+                try:
+                    n = int(pref.split("_", 1)[1])
+                except (IndexError, ValueError):
+                    n = 2
+                n = max(2, min(n, 6))
+                block_reward = self.W["block_reward"]
+                overrun = self.W["overrun_penalty"]
+
+                if block_reward:
+                    for i in range(len(days) - 1):
+                        a = self._worked_var(e, days[i])
+                        b = self._worked_var(e, days[i + 1])
+                        if a is None or b is None:
+                            continue
+                        both = self.model.new_bool_var(f"adj_{e}_{days[i]}")
+                        self.model.add_min_equality(both, [a, b])
+                        self._penalties.append(-block_reward * both)
+
+                if overrun:
+                    for i in range(len(days) - n):
+                        window = [self._worked_var(e, days[i + k])
+                                  for k in range(n + 1)]
+                        if any(v is None for v in window):
+                            continue
+                        over = self.model.new_bool_var(f"over_{e}_{days[i]}")
+                        self.model.add_min_equality(over, window)
+                        self._penalties.append(overrun * over)
+            else:  # avoid
+                w = self.W["consec_avoid"]
+                if not w:
                     continue
-                wt = self.model.new_bool_var(f"wd_{e}_{d}")
-                wn = self.model.new_bool_var(f"wt_{e}_{d}")
-                self.model.add_max_equality(wt, today)
-                self.model.add_max_equality(wn, tomorrow)
-                c = self.model.new_bool_var(f"consec_{e}_{d}")
-                self.model.add(wt + wn <= 1 + c)
-                self._penalties.append(1000 * c)
+                for i in range(len(days) - 1):
+                    a = self._worked_var(e, days[i])
+                    b = self._worked_var(e, days[i + 1])
+                    if a is None or b is None:
+                        continue
+                    c = self.model.new_bool_var(f"consec_{e}_{days[i]}")
+                    self.model.add(a + b <= 1 + c)
+                    self._penalties.append(w * c)
 
     def _prefer_2day_rest(self):
         """2 days rest after full 24h or night shift (soft)."""
+        rest_w = self.W["rest2"]
+        if not rest_w:
+            return
         days = self.config.days
         for e in range(len(self.employees)):
             for i in range(len(days) - 2):
@@ -437,11 +598,11 @@ class ScheduleSolver:
                     if (e, d, p) in self.xf:
                         v = self.model.new_bool_var(f"r2f_{e}_{d}_{p}")
                         self.model.add(self.xf[e, d, p] + wd2 <= 1 + v)
-                        self._penalties.append(80 * v)
+                        self._penalties.append(rest_w * v)
                     if (e, d, p) in self.xn:
                         v = self.model.new_bool_var(f"r2n_{e}_{d}_{p}")
                         self.model.add(self.xn[e, d, p] + wd2 <= 1 + v)
-                        self._penalties.append(80 * v)
+                        self._penalties.append(rest_w * v)
 
     def _prefer_full_shifts(self):
         """Prefer monolithic 24h shifts (с) over two separate 12h (д)+(н).
@@ -450,8 +611,8 @@ class ScheduleSolver:
         solver only falls back to split day/night when hour balance truly
         requires it.
         """
-        FULL_REWARD = 500
-        PARTIAL_PENALTY = 200
+        FULL_REWARD = self.W["full_reward"]
+        PARTIAL_PENALTY = self.W["partial_penalty"]
         for d in self.config.days:
             for p in self._24h_pidxs:
                 for e in range(len(self.employees)):
@@ -481,6 +642,8 @@ class ScheduleSolver:
 
             # 60 score → +30 weight on top of base (roughly doubles weight).
             senior_bonus = emp.seniority_score // 2
+            base_prefer = self.W["post_prefer"]
+            base_avoid = self.W["post_avoid"]
 
             for d in self.config.days:
                 for p, post in enumerate(self.posts):
@@ -488,9 +651,9 @@ class ScheduleSolver:
                     if level == "neutral":
                         continue
                     if level == "prefer":
-                        w = -(30 + senior_bonus)
+                        w = -(base_prefer + senior_bonus)
                     else:  # avoid
-                        w = 50 + senior_bonus
+                        w = base_avoid + senior_bonus
                     if p in self._24h_pidxs:
                         for dd in (self.xf, self.xd, self.xn):
                             if (e, d, p) in dd:
@@ -506,7 +669,9 @@ class ScheduleSolver:
         preferences are expressed through `shift_time_modes` instead, handled
         in `_shift_time_mode_penalty`.
         """
-        PREFER_REWARD = 120
+        PREFER_REWARD = self.W["legacy_24h_prefer"]
+        if not PREFER_REWARD:
+            return
         for e, emp in enumerate(self.employees):
             sp = self.shift_prefs.get(emp.name, {})
             pf = sp.get("pref_24h_full")
@@ -536,7 +701,7 @@ class ScheduleSolver:
         personal shift-time preferences are respected even when the solver
         would otherwise prefer a 24h monolith for coverage reasons.
         """
-        BIAS = 600
+        BIAS = self.W["shift_time_bias"]
         for e, emp in enumerate(self.employees):
             mode = self.shift_time_modes.get(emp.name, "neutral")
             if mode in ("neutral", "only_full", ""):
@@ -573,6 +738,8 @@ class ScheduleSolver:
                             self._penalties.append(-BIAS * x)
 
     def _weekend_fairness(self):
+        if not self.W["weekend_fairness"]:
+            return
         weekend_days = [d for d in self.config.days if self.config.is_weekend(d)]
         if not weekend_days:
             return
@@ -595,7 +762,7 @@ class ScheduleSolver:
         self.model.add_min_equality(mn, counts)
         sp = self.model.new_int_var(0, wk_max, "wk_spread")
         self.model.add(sp == mx - mn)
-        self._penalties.append(30 * sp)
+        self._penalties.append(self.W["weekend_fairness"] * sp)
 
     def _weekday_weekend_penalty(self):
         """Soft pref for weekdays/weekends: prefer -> reward, avoid -> penalty.
@@ -610,6 +777,8 @@ class ScheduleSolver:
                 continue
 
             senior_bonus = emp.seniority_score // 3
+            base_prefer = self.W["weekday_prefer"]
+            base_avoid = self.W["weekday_avoid"]
 
             for d in self.config.days:
                 is_wknd = self.config.is_weekend(d)
@@ -621,9 +790,9 @@ class ScheduleSolver:
                 if not pref:
                     continue
                 if pref == "prefer":
-                    w = -(10 + senior_bonus)
+                    w = -(base_prefer + senior_bonus)
                 elif pref == "avoid":
-                    w = 30 + senior_bonus
+                    w = base_avoid + senior_bonus
                 else:
                     w = 0
                 if w == 0:
@@ -641,15 +810,17 @@ class ScheduleSolver:
             if not prefs:
                 continue
             senior_bonus = emp.seniority_score // 3
+            base_prefer = self.W["dow_prefer"]
+            base_avoid = self.W["dow_avoid"]
             for d in self.config.days:
                 dow_str = str(self.config.day_of_week(d) + 1)
                 level = prefs.get(dow_str)
                 if not level:
                     continue
                 if level == "prefer":
-                    w = -(10 + senior_bonus)
+                    w = -(base_prefer + senior_bonus)
                 elif level == "avoid":
-                    w = 25 + senior_bonus
+                    w = base_avoid + senior_bonus
                 else:
                     w = 0
                 if w == 0:
@@ -669,7 +840,10 @@ class ScheduleSolver:
             if not dates:
                 continue
             senior_bonus = emp.seniority_score // 2
-            bonus = -(20 + senior_bonus)
+            base = self.W["desired_date"]
+            if not base:
+                continue
+            bonus = -(base + senior_bonus)
             date_set = set(dates)
             for d in self.config.days:
                 if d not in date_set:
@@ -677,6 +851,65 @@ class ScheduleSolver:
                 vs = self._all_vars_day(e, d)
                 for v in vs:
                     self._penalties.append(bonus * v)
+
+    def _soft_unavailable_penalty(self):
+        """Штраф за работу в «мягко нежелательный» день (третья градация
+        между жёстким «не могу» и «хочу»)."""
+        w = self.W["soft_unavailable"]
+        if not w:
+            return
+        for e, emp in enumerate(self.employees):
+            days = self.soft_unavailable.get(emp.name, [])
+            if not days:
+                continue
+            dayset = set(days)
+            for d in self.config.days:
+                if d not in dayset:
+                    continue
+                for v in self._all_vars_day(e, d):
+                    self._penalties.append(w * v)
+
+    def _pairing_penalty(self):
+        """Парные пожелания: avoidWith — штраф за совместный рабочий день,
+        preferWith — награда. «В одну смену» аппроксимируется «в один день»."""
+        name_idx = {emp.name: i for i, emp in enumerate(self.employees)}
+        wa = self.W["avoid_with"]
+        wp = self.W["prefer_with"]
+
+        def _pairs(source: dict[str, list[str]]):
+            seen: set[tuple[int, int]] = set()
+            for e, emp in enumerate(self.employees):
+                for other in source.get(emp.name, []) or []:
+                    f = name_idx.get(other)
+                    if f is None or f == e:
+                        continue
+                    key = (min(e, f), max(e, f))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    yield key
+
+        if wa:
+            for (e, f) in _pairs(self.avoid_with):
+                for d in self.config.days:
+                    a = self._worked_var(e, d)
+                    b = self._worked_var(f, d)
+                    if a is None or b is None:
+                        continue
+                    both = self.model.new_bool_var(f"avw_{e}_{f}_{d}")
+                    self.model.add_min_equality(both, [a, b])
+                    self._penalties.append(wa * both)
+
+        if wp:
+            for (e, f) in _pairs(self.prefer_with):
+                for d in self.config.days:
+                    a = self._worked_var(e, d)
+                    b = self._worked_var(f, d)
+                    if a is None or b is None:
+                        continue
+                    both = self.model.new_bool_var(f"prw_{e}_{f}_{d}")
+                    self.model.add_min_equality(both, [a, b])
+                    self._penalties.append(-wp * both)
 
     # ------------------------------------------------------------------
     #  Запуск
@@ -705,7 +938,53 @@ class ScheduleSolver:
             return self._extract(solver)
 
         _log("\n✗ Решение не найдено!")
+        self._finalize_diagnostics()
         return None
+
+    def _finalize_diagnostics(self):
+        """Сводка причин нерешаемости (баланс часов + слабые места покрытия)."""
+        # Баланс часов: суммарный спрос vs доступная ёмкость.
+        demand = 0
+        for d in self.config.days:
+            for post in self.posts:
+                if d not in self.config.post_active_days.get(post.id, []):
+                    continue
+                if post.shift_hours == 24:
+                    s_day = post.staff_required_day or post.staff_required
+                    s_night = post.staff_required_night or post.staff_required
+                    demand += (s_day + s_night) * 12
+                else:
+                    demand += post.staff_required * post.shift_hours
+
+        capacity = 0
+        for emp in self.employees:
+            cap = self.config.employee_max_hours.get(
+                emp.name, self.config.norm_hours * emp.max_rate)
+            capacity += int(cap)
+
+        summary: list[str] = []
+        if demand > capacity:
+            summary.append(
+                f"Суммарно нужно ~{demand} ч работы, а доступная ёмкость "
+                f"сотрудников ~{capacity} ч. Спрос превышает ёмкость на "
+                f"{demand - capacity} ч — снизьте требования к покрытию, "
+                f"повысьте лимиты ставок или добавьте людей."
+            )
+
+        # Слабые места покрытия (уникальные, не более 15).
+        seen: set[str] = set()
+        unique_cov: list[str] = []
+        for msg in self.diagnostics:
+            if msg in seen:
+                continue
+            seen.add(msg)
+            unique_cov.append(msg)
+
+        self.diagnostics = summary + unique_cov[:15]
+        if len(unique_cov) > 15:
+            self.diagnostics.append(
+                f"…и ещё {len(unique_cov) - 15} проблемных мест покрытия."
+            )
 
     def _extract(self, solver: cp_model.CpSolver) -> dict:
         schedule: dict[int, dict[str, list[str]]] = {}
@@ -737,4 +1016,25 @@ class ScheduleSolver:
                 _add(d, self.posts[p].id,
                      f"{self.employees[e].name}(н)", 12)
 
-        return {"schedule": schedule, "employee_hours": employee_hours}
+        result = {"schedule": schedule, "employee_hours": employee_hours}
+
+        if self.relax:
+            unfilled: list[dict] = []
+            total_missing = 0
+            for post, d, kind, short in self.shortfalls:
+                miss = int(solver.value(short))
+                if miss <= 0:
+                    continue
+                total_missing += miss
+                unfilled.append({
+                    "postId": post.id,
+                    "post": post.name,
+                    "day": d,
+                    "kind": kind,
+                    "count": miss,
+                })
+            result["relaxed"] = True
+            result["unfilled"] = unfilled
+            result["unfilledCount"] = total_missing
+
+        return result

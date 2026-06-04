@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -33,6 +34,23 @@ const PREF_LEVELS = [
   { value: "avoid", label: "Не ставить", color: "text-red-400" },
 ] as const;
 
+const CONSECUTIVE_OPTIONS = [
+  { value: "avoid", label: "Не ставить смены подряд" },
+  { value: "neutral", label: "Без разницы" },
+  { value: "prefer_2", label: "Предпочитает 2 подряд" },
+  { value: "prefer_3", label: "Предпочитает 3 подряд" },
+  { value: "prefer_4", label: "Предпочитает 4 подряд" },
+] as const;
+
+const MEDICAL_OPTIONS = [
+  { value: "none", label: "Без ограничений" },
+  { value: "no_night", label: "Без ночных (н)" },
+  { value: "no_24h", label: "Без суточных (с)" },
+  { value: "day_only", label: "Только дневные" },
+] as const;
+
+const DOW_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"] as const;
+
 function prefLabel(v: string) {
   const pl = PREF_LEVELS.find((o) => o.value === v);
   return <span className={pl?.color ?? ""}>{pl?.label ?? v}</span>;
@@ -51,6 +69,10 @@ type Employee = {
   modalities: string[];
   can24h: boolean;
   postPreferences: Record<string, string>;
+  consecutivePref: string;
+  medicalRestriction: string;
+  medicalNote: string | null;
+  recurringUnavailableDows: number[];
 };
 
 type Post = {
@@ -164,6 +186,16 @@ export function EmployeeManager({ initialEmployees, posts }: Props) {
     updateLocal(empId, { postPreferences: next });
   }
 
+  function toggleRecurringDow(empId: string, dow: number) {
+    const emp = employees.find((e) => e.id === empId);
+    if (!emp) return;
+    const has = emp.recurringUnavailableDows.includes(dow);
+    const next = has
+      ? emp.recurringUnavailableDows.filter((d) => d !== dow)
+      : [...emp.recurringUnavailableDows, dow].sort((a, b) => a - b);
+    updateLocal(empId, { recurringUnavailableDows: next });
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4 flex-wrap">
@@ -215,6 +247,16 @@ export function EmployeeManager({ initialEmployees, posts }: Props) {
                   {emp.can24h && (
                     <Badge variant="secondary" className="text-[10px] shrink-0">
                       24ч
+                    </Badge>
+                  )}
+                  {emp.medicalRestriction !== "none" && (
+                    <Badge
+                      variant="destructive"
+                      className="text-[10px] shrink-0"
+                    >
+                      {MEDICAL_OPTIONS.find(
+                        (o) => o.value === emp.medicalRestriction,
+                      )?.label ?? emp.medicalRestriction}
                     </Badge>
                   )}
                 </div>
@@ -342,6 +384,101 @@ export function EmployeeManager({ initialEmployees, posts }: Props) {
                         </label>
                       )}
                     </div>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="space-y-1.5">
+                      <Label>Мед/правовое ограничение</Label>
+                      <Select
+                        value={emp.medicalRestriction}
+                        onValueChange={(v) =>
+                          v &&
+                          updateLocal(emp.id, { medicalRestriction: v })
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {MEDICAL_OPTIONS.map((o) => (
+                            <SelectItem key={o.value} value={o.value}>
+                              {o.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-[11px] text-muted-foreground">
+                        Жёсткое ограничение: солвер никогда не нарушит.
+                      </p>
+                    </div>
+                    <div className="space-y-1.5">
+                      <Label>Очерёдность смен (по умолчанию)</Label>
+                      <Select
+                        value={emp.consecutivePref}
+                        onValueChange={(v) =>
+                          v && updateLocal(emp.id, { consecutivePref: v })
+                        }
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {CONSECUTIVE_OPTIONS.map((o) => (
+                            <SelectItem key={o.value} value={o.value}>
+                              {o.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <p className="text-[11px] text-muted-foreground">
+                        Можно переопределить в предпочтениях на конкретный месяц.
+                      </p>
+                    </div>
+                  </div>
+
+                  {emp.medicalRestriction !== "none" && (
+                    <div className="space-y-1.5">
+                      <Label>Комментарий к ограничению (необязательно)</Label>
+                      <Textarea
+                        rows={2}
+                        placeholder="напр. справка до 01.09, беременность и т.п."
+                        value={emp.medicalNote ?? ""}
+                        onChange={(e) =>
+                          updateLocal(emp.id, {
+                            medicalNote: e.target.value || null,
+                          })
+                        }
+                      />
+                    </div>
+                  )}
+
+                  <div>
+                    <Label className="mb-2 block">
+                      Регулярно недоступен по дням недели
+                    </Label>
+                    <div className="flex gap-1.5 flex-wrap">
+                      {DOW_LABELS.map((lbl, idx) => {
+                        const active =
+                          emp.recurringUnavailableDows.includes(idx);
+                        return (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => toggleRecurringDow(emp.id, idx)}
+                            className={`h-8 w-10 rounded border text-xs transition-colors ${
+                              active
+                                ? "bg-red-500 text-white border-red-500"
+                                : "bg-background hover:bg-muted"
+                            }`}
+                          >
+                            {lbl}
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <p className="text-[11px] text-muted-foreground mt-1">
+                      Жёсткая недоступность каждую неделю (напр. учебный день).
+                    </p>
                   </div>
 
                   {visiblePosts.length > 0 && (

@@ -67,8 +67,9 @@ export async function middleware(req: NextRequest) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  if (pathname === "/" ) {
-    return NextResponse.redirect(new URL("/schedule", req.url));
+  // "/" — умный лендинг (страница сама решает, куда вести сотрудника).
+  if (pathname === "/") {
+    return NextResponse.next();
   }
 
   const allowed = EMPLOYEE_ALLOWED_PREFIXES.some((p) => pathname.startsWith(p));

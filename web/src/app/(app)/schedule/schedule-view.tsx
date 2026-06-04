@@ -87,6 +87,113 @@ function downloadTextFile(content: string, filename: string, mime: string) {
   URL.revokeObjectURL(url);
 }
 
+/** Красивый экспорт в Excel через exceljs */
+async function exportToExcel(
+  year: number,
+  month: number,
+  schedule: Schedule,
+  posts: Post[],
+  normHours: number | null
+) {
+  const ExcelJS = (await import("exceljs")).default;
+  const { saveAs } = (await import("file-saver")).default;
+  
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("График", {
+    views: [{ state: "frozen", ySplit: 2, xSplit: 2 }],
+  });
+
+  const numDays = new Date(year, month, 0).getDate();
+  const title =
+    normHours != null && normHours > 0
+      ? `${MONTH_NAMES[month - 1].toUpperCase()} ${normHours} ч`
+      : MONTH_NAMES[month - 1].toUpperCase();
+
+  const colCount = 2 + posts.length;
+
+  const thinBorder = {
+    top: { style: "thin" as const, color: { argb: "FFBFBFBF" } },
+    left: { style: "thin" as const, color: { argb: "FFBFBFBF" } },
+    bottom: { style: "thin" as const, color: { argb: "FFBFBFBF" } },
+    right: { style: "thin" as const, color: { argb: "FFBFBFBF" } },
+  };
+
+  const titleRow = worksheet.addRow([title]);
+  worksheet.mergeCells(1, 1, 1, colCount);
+  titleRow.height = 18;
+  titleRow.getCell(1).font = { size: 11, bold: true };
+  titleRow.getCell(1).alignment = { vertical: "middle", horizontal: "center" };
+
+  const headerRow = worksheet.addRow([
+    "Дата",
+    "ДН",
+    ...posts.map((p) => p.name),
+  ]);
+  headerRow.height = 22;
+  headerRow.eachCell((cell) => {
+    cell.font = { bold: true, size: 9 };
+    cell.alignment = { vertical: "middle", horizontal: "center", wrapText: true };
+    cell.fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FFEDEDED" },
+    };
+    cell.border = thinBorder;
+  });
+
+  worksheet.getColumn(1).width = 7;
+  worksheet.getColumn(2).width = 4;
+  for (let i = 0; i < posts.length; i++) {
+    worksheet.getColumn(3 + i).width = 14;
+  }
+
+  for (let d = 1; d <= numDays; d++) {
+    const date = new Date(year, month - 1, d);
+    const dow = DAY_NAMES[(date.getDay() + 6) % 7];
+    const isWeekendDay = date.getDay() === 0 || date.getDay() === 6;
+    const dateStr = `${String(d).padStart(2, "0")}.${MONTH_ABBR_RU[month - 1]}`;
+    const dayStr = String(d);
+    const dayData = schedule[dayStr] ?? {};
+
+    let maxPeople = 1;
+    const cells = posts.map((p) => {
+      const arr = dayData[p.id] ?? [];
+      if (arr.length > maxPeople) maxPeople = arr.length;
+      return arr.join("\n").trim();
+    });
+
+    const row = worksheet.addRow([dateStr, dow, ...cells]);
+    row.height = Math.max(14, maxPeople * 11);
+
+    row.eachCell((cell, colNumber) => {
+      cell.font = { size: 9 };
+      cell.alignment = {
+        vertical: "middle",
+        horizontal: colNumber <= 2 ? "center" : "center",
+        wrapText: true,
+      };
+      cell.border = thinBorder;
+
+      if (isWeekendDay) {
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFFDECEC" },
+        };
+        if (colNumber <= 2) {
+          cell.font = { size: 9, color: { argb: "FFB42318" }, bold: true };
+        }
+      } else if (colNumber <= 2) {
+        cell.font = { size: 9, bold: true };
+      }
+    });
+  }
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  saveAs(blob, `grafik_${year}_${String(month).padStart(2, "0")}.xlsx`);
+}
+
 interface Props {
   year: number;
   month: number;
@@ -286,6 +393,21 @@ export function ScheduleView({
             className="gap-1.5"
             onClick={() => {
               if (!schedule) return;
+              exportToExcel(year, month, schedule, posts, normHours ?? null);
+            }}
+          >
+            <Table className="h-4 w-4" />
+            <span className="hidden sm:inline">Excel (.xlsx)</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            type="button"
+            disabled={!schedule}
+            className="gap-1 h-8 px-2 text-muted-foreground"
+            title="CSV с разделителем «;» для импорта в Google Таблицы"
+            onClick={() => {
+              if (!schedule) return;
               const csv = buildScheduleCsv(
                 year,
                 month,
@@ -300,8 +422,7 @@ export function ScheduleView({
               );
             }}
           >
-            <Table className="h-4 w-4" />
-            <span className="hidden sm:inline">Excel (CSV)</span>
+            <span className="hidden sm:inline text-xs">CSV</span>
           </Button>
         </div>
       </div>

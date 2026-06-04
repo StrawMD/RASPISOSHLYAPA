@@ -60,6 +60,45 @@ export async function PUT(req: NextRequest) {
       ? null
       : Math.trunc(Number(body.careerStartYear));
 
+  const ALLOWED_CONSEC = new Set([
+    "avoid",
+    "neutral",
+    "prefer_2",
+    "prefer_3",
+    "prefer_4",
+  ]);
+  const consecutivePref =
+    typeof body.consecutivePref === "string" &&
+    ALLOWED_CONSEC.has(body.consecutivePref)
+      ? body.consecutivePref
+      : current.consecutivePref;
+
+  const ALLOWED_MEDICAL = new Set(["none", "no_night", "no_24h", "day_only"]);
+  const medicalRestriction =
+    typeof body.medicalRestriction === "string" &&
+    ALLOWED_MEDICAL.has(body.medicalRestriction)
+      ? body.medicalRestriction
+      : current.medicalRestriction;
+  const medicalNote =
+    typeof body.medicalNote === "string" && body.medicalNote.trim()
+      ? body.medicalNote.trim().slice(0, 300)
+      : null;
+
+  let recurringUnavailableDows: number[];
+  if (Array.isArray(body.recurringUnavailableDows)) {
+    const nums = (body.recurringUnavailableDows as unknown[])
+      .map((n) => Math.trunc(Number(n)))
+      .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6);
+    recurringUnavailableDows = Array.from(new Set<number>(nums)).sort(
+      (a, b) => a - b,
+    );
+  } else {
+    recurringUnavailableDows = safeJson<number[]>(
+      current.recurringUnavailableDows,
+      [],
+    );
+  }
+
   const updated = await prisma.employee.update({
     where: { id: employeeId },
     data: {
@@ -71,6 +110,10 @@ export async function PUT(req: NextRequest) {
       can24h: canWork24h,
       hospitalStartYear,
       careerStartYear,
+      consecutivePref,
+      medicalRestriction,
+      medicalNote,
+      recurringUnavailableDows: JSON.stringify(recurringUnavailableDows),
     },
   });
 
@@ -85,5 +128,9 @@ export async function PUT(req: NextRequest) {
     can24h: updated.can24h,
     hospitalStartYear: updated.hospitalStartYear,
     careerStartYear: updated.careerStartYear,
+    consecutivePref: updated.consecutivePref,
+    medicalRestriction: updated.medicalRestriction,
+    medicalNote: updated.medicalNote,
+    recurringUnavailableDows: safeJson(updated.recurringUnavailableDows, []),
   });
 }

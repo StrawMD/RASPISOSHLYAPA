@@ -24,6 +24,11 @@ export interface SolverInput {
     hospitalYears: number;
     careerYears: number;
     seniorityScore: number;
+    consecutivePref?: string;
+    medicalRestriction?: string;
+    can24h?: boolean;
+    maxNights?: number | null;
+    maxFull?: number | null;
   }[];
   config: {
     year: number;
@@ -46,11 +51,49 @@ export interface SolverInput {
   weekendPrefs?: Record<string, string>;
   dowPrefs?: Record<string, Record<string, string>>;
   desiredDates?: Record<string, number[]>;
+  softUnavailableDays?: Record<string, number[]>;
+  avoidWith?: Record<string, string[]>;
+  preferWith?: Record<string, string[]>;
+  /** Конфигурируемые веса целевой функции (любой 0 = выключить фактор). */
+  weights?: Record<string, number>;
+  /** Режим релаксации: разрешить незакрытые слоты (мягкое покрытие). */
+  relax?: boolean;
 }
 
 export interface SolverOutput {
   schedule: Record<string, Record<string, string[]>>;
   employeeHours: Record<string, number>;
+  /** true, если расписание составлено в режиме релаксации (с пропусками). */
+  relaxed?: boolean;
+  /** Структурированный список незакрытых слотов. */
+  unfilled?: UnfilledSlot[];
+  /** Суммарное число незакрытых позиций. */
+  unfilledCount?: number;
+}
+
+export interface UnfilledSlot {
+  postId: string;
+  post: string;
+  day: number;
+  /** «день» | «ночь» | «смена» */
+  kind: string;
+  count: number;
+}
+
+/** Ошибка нерешаемости с человекочитаемыми причинами. */
+export class SolverInfeasibleError extends Error {
+  diagnostics: string[];
+  constructor(diagnostics: string[]) {
+    const head =
+      "Расписание не удалось составить с текущими ограничениями.";
+    super(
+      diagnostics.length
+        ? `${head}\nВозможные причины:\n• ${diagnostics.join("\n• ")}`
+        : head,
+    );
+    this.name = "SolverInfeasibleError";
+    this.diagnostics = diagnostics;
+  }
 }
 
 export async function runSolver(input: SolverInput): Promise<SolverOutput> {
@@ -88,11 +131,18 @@ export async function runSolver(input: SolverInput): Promise<SolverOutput> {
     const parsed = JSON.parse(jsonLine) as {
       error?: string;
       messages?: string[];
+      diagnostics?: string[];
       schedule?: SolverOutput["schedule"];
       employeeHours?: SolverOutput["employeeHours"];
+      relaxed?: boolean;
+      unfilled?: UnfilledSlot[];
+      unfilledCount?: number;
     };
     if (parsed.error === "fixed_slots" && Array.isArray(parsed.messages)) {
       throw new Error(parsed.messages.join("; "));
+    }
+    if (parsed.error === "No solution found") {
+      throw new SolverInfeasibleError(parsed.diagnostics ?? []);
     }
     if (parsed.error) {
       throw new Error(parsed.error);

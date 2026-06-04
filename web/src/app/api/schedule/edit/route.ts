@@ -36,12 +36,16 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
 
+  const sp = safeJson<{
+    normHours?: number;
+    relaxed?: boolean;
+    unfilled?: { postId: string; post: string; day: number; kind: string; count: number }[];
+    unfilledCount?: number;
+  }>(version.solverParams, {});
+
   let normHours = version.month.normHours ?? 0;
-  if (normHours <= 0 && version.solverParams) {
-    const sp = safeJson<{ normHours?: number }>(version.solverParams, {});
-    if (typeof sp.normHours === "number" && sp.normHours > 0) {
-      normHours = sp.normHours;
-    }
+  if (normHours <= 0 && typeof sp.normHours === "number" && sp.normHours > 0) {
+    normHours = sp.normHours;
   }
 
   const posts = await prisma.post.findMany({ orderBy: { sortOrder: "asc" } });
@@ -59,6 +63,9 @@ export async function GET(req: NextRequest) {
     },
     schedule: safeJson(version.data, {}),
     employeeHours: safeJson(version.employeeHours, {}),
+    relaxed: Boolean(sp.relaxed),
+    unfilled: sp.unfilled ?? [],
+    unfilledCount: sp.unfilledCount ?? 0,
     posts,
     employees: employees.map((e) => ({
       id: e.id,

@@ -30,6 +30,8 @@ export async function POST(req: NextRequest) {
     pref24hFull, pref24hDay, pref24hNight, shiftTimeMode,
     postPreferences, unavailableDays, weekdayPref, weekendPref,
     dayOfWeekPrefs, desiredDates, comment,
+    softUnavailableDays, loadPref, maxNights, maxFull,
+    avoidWith, preferWith,
   } = body;
 
   const ALLOWED_MODES = new Set([
@@ -42,6 +44,37 @@ export async function POST(req: NextRequest) {
     typeof shiftTimeMode === "string" && ALLOWED_MODES.has(shiftTimeMode)
       ? shiftTimeMode
       : null;
+
+  const ALLOWED_LOAD = new Set(["less", "normal", "more"]);
+  const normalizedLoadPref =
+    typeof loadPref === "string" && ALLOWED_LOAD.has(loadPref) && loadPref !== "normal"
+      ? loadPref
+      : null;
+
+  function toCap(v: unknown): number | null {
+    if (typeof v !== "number" || !Number.isInteger(v) || v < 0 || v > 31) {
+      return null;
+    }
+    return v;
+  }
+  function toNameArray(v: unknown): string[] {
+    if (!Array.isArray(v)) return [];
+    return Array.from(
+      new Set(
+        v.filter((x): x is string => typeof x === "string" && x.trim().length > 0),
+      ),
+    );
+  }
+
+  const normSoftDays: number[] = Array.isArray(softUnavailableDays)
+    ? softUnavailableDays.filter(
+        (d: unknown) => Number.isInteger(d) && (d as number) >= 1 && (d as number) <= 31,
+      )
+    : [];
+  const normAvoidWith = toNameArray(avoidWith);
+  const normPreferWith = toNameArray(preferWith).filter(
+    (n) => !normAvoidWith.includes(n),
+  );
 
   const isAdmin = ["admin", "schedule_manager"].includes(session.user.role);
   if (!isAdmin && session.user.employeeId !== employeeId) {
@@ -104,6 +137,12 @@ export async function POST(req: NextRequest) {
       dayOfWeekPrefs: JSON.stringify(dayOfWeekPrefs ?? {}),
       desiredDates: JSON.stringify(desiredDates ?? []),
       comment: comment ?? null,
+      softUnavailableDays: JSON.stringify(normSoftDays),
+      loadPref: normalizedLoadPref,
+      maxNights: toCap(maxNights),
+      maxFull: toCap(maxFull),
+      avoidWith: JSON.stringify(normAvoidWith),
+      preferWith: JSON.stringify(normPreferWith),
       submittedAt: new Date(),
     },
     create: {
@@ -121,6 +160,12 @@ export async function POST(req: NextRequest) {
       dayOfWeekPrefs: JSON.stringify(dayOfWeekPrefs ?? {}),
       desiredDates: JSON.stringify(desiredDates ?? []),
       comment: comment ?? null,
+      softUnavailableDays: JSON.stringify(normSoftDays),
+      loadPref: normalizedLoadPref,
+      maxNights: toCap(maxNights),
+      maxFull: toCap(maxFull),
+      avoidWith: JSON.stringify(normAvoidWith),
+      preferWith: JSON.stringify(normPreferWith),
     },
   });
 

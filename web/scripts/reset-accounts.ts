@@ -16,6 +16,10 @@
  * deleted employees are cleaned up.
  *
  * Usage:  npx tsx scripts/reset-accounts.ts
+ *
+ * Общий пароль для рассылки коллегам можно задать через переменные окружения:
+ *   EMPLOYEE_PASSWORD="одинпароль" ADMIN_PASSWORD="..." npx tsx scripts/reset-accounts.ts
+ * или через npm-скрипт: npm run reset-accounts
  */
 
 import { PrismaClient } from "@prisma/client";
@@ -23,8 +27,8 @@ import { hash } from "bcryptjs";
 
 const prisma = new PrismaClient();
 
-const DEFAULT_PASSWORD = "Боткин1!";
-const ADMIN_PASSWORD = "admin123";
+const DEFAULT_PASSWORD = process.env.EMPLOYEE_PASSWORD || "Боткин1!";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
 const ADMIN_SURNAMES = new Set(["Соломка", "Знатнова"]);
 const PRIMARY_ADMIN_SURNAME = "Соломка";
 

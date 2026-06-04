@@ -35,6 +35,13 @@ model Employee {
   modalities       String   @default("[]")
   can24h           Boolean  @default(false)
   postPreferences  String   @default("{}")
+  /** Очерёдность смен по умолчанию: avoid | neutral | prefer_2 | prefer_3 | prefer_4 */
+  consecutivePref  String   @default("avoid")
+  /** Жёсткое мед/правовое ограничение: none | no_night | no_24h | day_only */
+  medicalRestriction String @default("none")
+  medicalNote        String?
+  /** JSON: массив индексов дней недели (0=Пн..6=Вс), когда сотрудник регулярно недоступен. */
+  recurringUnavailableDows String @default("[]")
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -114,6 +121,20 @@ model Preference {
   weekendPref     String?
   dayOfWeekPrefs  String   @default("{}")
   desiredDates    String   @default("[]")
+  /** Мягкие нежелательные дни (в отличие от жёстких unavailableDays): solver penalty. */
+  softUnavailableDays String @default("[]")
+  /** Переопределение очерёдности смен на этот месяц (null → берётся из Employee). */
+  consecutivePrefOverride String?
+  /** Желаемая нагрузка в этом месяце: less | normal | more (null = normal). */
+  loadPref        String?
+  /** Личный лимит ночных (н) смен за месяц (null = без лимита). */
+  maxNights       Int?
+  /** Личный лимит суточных (с) смен за месяц (null = без лимита). */
+  maxFull         Int?
+  /** JSON: имена сотрудников, с кем НЕ ставить в одну смену/день. */
+  avoidWith       String   @default("[]")
+  /** JSON: имена сотрудников, с кем желательно работать вместе. */
+  preferWith      String   @default("[]")
   comment         String?
   submittedAt     DateTime @default(now())
   updatedAt       DateTime @updatedAt

@@ -1,5 +1,6 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { getPlanningMonth } from "@/lib/planning-month";
 import { PreferencesForm } from "./preferences-form";
 
 function safeJson<T>(value: string | null | undefined, fallback: T): T {
@@ -30,14 +31,22 @@ export default async function PreferencesPage() {
     (p) => p.shiftHours === 24 && p.modality === "КТ",
   );
 
-  const now = new Date();
-  const nextMonth = now.getMonth() + 2 > 12
-    ? { year: now.getFullYear() + 1, month: 1 }
-    : { year: now.getFullYear(), month: now.getMonth() + 2 };
+  const planning = await getPlanningMonth();
+  const nextMonth = { year: planning.year, month: planning.month };
 
-  const month = await prisma.month.findUnique({
-    where: { year_month: nextMonth },
-  });
+  const month = planning.monthId
+    ? await prisma.month.findUnique({ where: { id: planning.monthId } })
+    : await prisma.month.findUnique({
+        where: { year_month: nextMonth },
+      });
+
+  const coworkers = (
+    await prisma.employee.findMany({
+      where: { id: { not: employee.id } },
+      select: { name: true },
+      orderBy: { name: "asc" },
+    })
+  ).map((e) => e.name);
 
   const existing = month
     ? await prisma.preference.findUnique({
@@ -48,6 +57,41 @@ export default async function PreferencesPage() {
           },
         },
       })
+    : null;
+
+  // Предпочтения с прошлого месяца — для кнопки «скопировать».
+  const prevYm =
+    nextMonth.month === 1
+      ? { year: nextMonth.year - 1, month: 12 }
+      : { year: nextMonth.year, month: nextMonth.month - 1 };
+  const prevMonthRec = await prisma.month.findUnique({
+    where: { year_month: prevYm },
+  });
+  const prevPref = prevMonthRec
+    ? await prisma.preference.findUnique({
+        where: {
+          employeeId_monthId: {
+            employeeId: employee.id,
+            monthId: prevMonthRec.id,
+          },
+        },
+      })
+    : null;
+  const previous = prevPref
+    ? {
+        shiftTimeMode: prevPref.shiftTimeMode,
+        postPreferences: safeJson(prevPref.postPreferences, {}),
+        weekdayPref: prevPref.weekdayPref,
+        weekendPref: prevPref.weekendPref,
+        dayOfWeekPrefs: safeJson(prevPref.dayOfWeekPrefs, {}),
+        softUnavailableDays: safeJson(prevPref.softUnavailableDays, []),
+        consecutivePrefOverride: prevPref.consecutivePrefOverride,
+        loadPref: prevPref.loadPref,
+        maxNights: prevPref.maxNights,
+        maxFull: prevPref.maxFull,
+        avoidWith: safeJson(prevPref.avoidWith, []),
+        preferWith: safeJson(prevPref.preferWith, []),
+      }
     : null;
 
   return (
@@ -64,7 +108,13 @@ export default async function PreferencesPage() {
           can24h: employee.can24h,
           hospitalStartYear: employee.hospitalStartYear,
           careerStartYear: employee.careerStartYear,
+          consecutivePref: employee.consecutivePref,
+          medicalRestriction: employee.medicalRestriction,
+          medicalNote: employee.medicalNote,
+          recurringUnavailableDows: safeJson(employee.recurringUnavailableDows, []),
         }}
+        coworkers={coworkers}
+        previous={previous}
         posts={posts.map((p) => ({
           id: p.id,
           name: p.name,
@@ -91,6 +141,13 @@ export default async function PreferencesPage() {
                 dayOfWeekPrefs: safeJson(existing.dayOfWeekPrefs, {}),
                 desiredDates: safeJson(existing.desiredDates, []),
                 comment: existing.comment,
+                softUnavailableDays: safeJson(existing.softUnavailableDays, []),
+                consecutivePrefOverride: existing.consecutivePrefOverride,
+                loadPref: existing.loadPref,
+                maxNights: existing.maxNights,
+                maxFull: existing.maxFull,
+                avoidWith: safeJson(existing.avoidWith, []),
+                preferWith: safeJson(existing.preferWith, []),
               }
             : null
         }

@@ -11,14 +11,18 @@ import {
   History,
   FileEdit,
   ClipboardList,
+  ClipboardCheck,
   Palmtree,
   ArrowLeft,
   Pin,
+  SlidersHorizontal,
 } from "lucide-react";
 
 const ADMIN_NAV = [
   { href: "/admin", label: "Обзор", icon: ClipboardList, exact: true },
+  { href: "/admin/preferences", label: "Сбор предпочтений", icon: ClipboardCheck },
   { href: "/admin/generate", label: "Генерация", icon: Sparkles },
+  { href: "/admin/settings", label: "Веса солвера", icon: SlidersHorizontal },
   { href: "/admin/fixed-slots", label: "Фикс. слоты", icon: Pin },
   { href: "/admin/versions", label: "Версии", icon: History },
   { href: "/admin/schedule/edit", label: "Редактор", icon: FileEdit },

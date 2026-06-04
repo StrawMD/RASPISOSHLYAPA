@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,7 +11,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { toast } from "sonner";
-import { Loader2, Plus, X, ArrowLeftRight, History } from "lucide-react";
+import { Loader2, Plus, X, ArrowLeftRight, History, AlertTriangle } from "lucide-react";
 
 const DAY_NAMES = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
@@ -125,6 +125,11 @@ export function ScheduleEditPage() {
   const [recentEdits, setRecentEdits] = useState<EditLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [showLog, setShowLog] = useState(false);
+  const [relaxed, setRelaxed] = useState(false);
+  // Целевое число людей в ячейке (на момент открытия) = занято + недобор.
+  // Подсветка «дыр» гаснет по мере дозаполнения в текущей сессии.
+  const [cellTargets, setCellTargets] = useState<Record<string, number>>({});
+  const targetsInitialized = useRef(false);
 
   const load = useCallback(async () => {
     if (!versionId) return;
@@ -138,6 +143,23 @@ export function ScheduleEditPage() {
       setPosts(data.posts);
       setEmployees(data.employees);
       setRecentEdits(data.recentEdits);
+      setRelaxed(Boolean(data.relaxed));
+
+      if (!targetsInitialized.current) {
+        targetsInitialized.current = true;
+        const unfilled: { postId: string; day: number; count: number }[] =
+          data.unfilled ?? [];
+        if (unfilled.length > 0) {
+          const sched: Schedule = data.schedule ?? {};
+          const targets: Record<string, number> = {};
+          for (const u of unfilled) {
+            const key = `${u.day}:${u.postId}`;
+            const assigned = (sched[String(u.day)]?.[u.postId] ?? []).length;
+            targets[key] = (targets[key] ?? assigned) + u.count;
+          }
+          setCellTargets(targets);
+        }
+      }
     }
     setLoading(false);
   }, [versionId]);
@@ -215,6 +237,22 @@ export function ScheduleEditPage() {
   const normHours = version.normHours ?? 0;
   const employeeByName = new Map(employees.map((e) => [e.name, e]));
 
+  function cellHole(day: number, postId: string): number {
+    const target = cellTargets[`${day}:${postId}`];
+    if (target == null) return 0;
+    const current = (schedule[String(day)]?.[postId] ?? []).length;
+    return Math.max(0, target - current);
+  }
+
+  const remainingHoles = Object.entries(cellTargets).reduce(
+    (acc, [key, target]) => {
+      const [day, postId] = key.split(":");
+      const current = (schedule[day]?.[postId] ?? []).length;
+      return acc + Math.max(0, target - current);
+    },
+    0,
+  );
+
   const effectiveHours =
     Object.keys(computedHours).length > 0 ? computedHours : employeeHours;
 
@@ -250,6 +288,23 @@ export function ScheduleEditPage() {
           </Button>
         </div>
       </div>
+
+      {relaxed && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/20 px-3 py-2 text-sm">
+          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
+          <div>
+            {remainingHoles > 0 ? (
+              <>
+                Черновик с пропусками: осталось дозакрыть{" "}
+                <strong>{remainingHoles}</strong> поз. Ячейки-«дыры» подсвечены
+                янтарной рамкой — добавьте людей через «+».
+              </>
+            ) : (
+              <>Все пропуски закрыты вручную. Можно публиковать.</>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="overflow-x-auto">
         <table className="w-full text-xs border-collapse min-w-[800px]">
@@ -297,10 +352,26 @@ export function ScheduleEditPage() {
                     const available = eligible.filter(
                       (e) => !assignedNames.has(e.name)
                     );
+                    const hole = cellHole(d, p.id);
 
                     return (
-                      <td key={p.id} className="border px-1 py-0.5">
+                      <td
+                        key={p.id}
+                        className={`border px-1 py-0.5 ${
+                          hole > 0
+                            ? "outline outline-2 -outline-offset-2 outline-amber-400 bg-amber-50/60 dark:bg-amber-950/30"
+                            : ""
+                        }`}
+                      >
                         <div className="flex flex-wrap gap-0.5 items-center min-h-[1.5rem]">
+                          {hole > 0 && (
+                            <span
+                              className="inline-flex items-center rounded bg-amber-500 text-white px-1 py-px text-[10px] font-semibold leading-none"
+                              title={`Не закрыто позиций: ${hole}`}
+                            >
+                              −{hole}
+                            </span>
+                          )}
                           {people.map((person: string, idx: number) => {
                             const baseName = person.replace(/\([сдн]\)$/, "");
                             const personStat = getStat(baseName);

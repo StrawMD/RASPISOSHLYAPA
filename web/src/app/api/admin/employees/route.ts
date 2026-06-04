@@ -15,6 +15,32 @@ async function checkAdmin() {
   return session;
 }
 
+const ALLOWED_CONSEC = new Set([
+  "avoid",
+  "neutral",
+  "prefer_2",
+  "prefer_3",
+  "prefer_4",
+]);
+const ALLOWED_MEDICAL = new Set(["none", "no_night", "no_24h", "day_only"]);
+
+function normConsec(v: unknown): string {
+  return typeof v === "string" && ALLOWED_CONSEC.has(v) ? v : "avoid";
+}
+function normMedical(v: unknown): string {
+  return typeof v === "string" && ALLOWED_MEDICAL.has(v) ? v : "none";
+}
+function normMedicalNote(v: unknown): string | null {
+  return typeof v === "string" && v.trim() ? v.trim().slice(0, 300) : null;
+}
+function normDows(v: unknown): string {
+  if (!Array.isArray(v)) return "[]";
+  const nums = (v as unknown[])
+    .map((n) => Math.trunc(Number(n)))
+    .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6);
+  return JSON.stringify(Array.from(new Set<number>(nums)).sort((a, b) => a - b));
+}
+
 export async function GET() {
   if (!(await checkAdmin())) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
@@ -31,6 +57,7 @@ export async function GET() {
       allowedPosts: safeJson(e.allowedPosts, []),
       modalities: safeJson(e.modalities, []),
       postPreferences: safeJson(e.postPreferences, {}),
+      recurringUnavailableDows: safeJson(e.recurringUnavailableDows, []),
     }))
   );
 }
@@ -58,6 +85,10 @@ export async function POST(req: NextRequest) {
       modalities: JSON.stringify(body.modalities ?? []),
       can24h: body.can24h ?? false,
       postPreferences: JSON.stringify(body.postPreferences ?? {}),
+      consecutivePref: normConsec(body.consecutivePref),
+      medicalRestriction: normMedical(body.medicalRestriction),
+      medicalNote: normMedicalNote(body.medicalNote),
+      recurringUnavailableDows: normDows(body.recurringUnavailableDows),
     },
   });
 
@@ -66,6 +97,7 @@ export async function POST(req: NextRequest) {
     allowedPosts: safeJson(employee.allowedPosts, []),
     modalities: safeJson(employee.modalities, []),
     postPreferences: safeJson(employee.postPreferences, {}),
+    recurringUnavailableDows: safeJson(employee.recurringUnavailableDows, []),
   });
 }
 
@@ -93,6 +125,10 @@ export async function PUT(req: NextRequest) {
       modalities: JSON.stringify(body.modalities ?? []),
       can24h: body.can24h ?? false,
       postPreferences: JSON.stringify(body.postPreferences ?? {}),
+      consecutivePref: normConsec(body.consecutivePref),
+      medicalRestriction: normMedical(body.medicalRestriction),
+      medicalNote: normMedicalNote(body.medicalNote),
+      recurringUnavailableDows: normDows(body.recurringUnavailableDows),
     },
   });
 
@@ -101,6 +137,7 @@ export async function PUT(req: NextRequest) {
     allowedPosts: safeJson(employee.allowedPosts, []),
     modalities: safeJson(employee.modalities, []),
     postPreferences: safeJson(employee.postPreferences, {}),
+    recurringUnavailableDows: safeJson(employee.recurringUnavailableDows, []),
   });
 }
 

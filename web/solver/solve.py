@@ -47,6 +47,11 @@ def main():
                 e.get("hospitalYears", e.get("seniority", 0) or 0),
             ),
             seniority_score=e.get("seniorityScore", 0),
+            consecutive_pref=e.get("consecutivePref", "avoid") or "avoid",
+            medical_restriction=e.get("medicalRestriction", "none") or "none",
+            can_24h=bool(e.get("can24h", True)),
+            max_nights=e.get("maxNights"),
+            max_full=e.get("maxFull"),
         )
         for e in input_data["employees"]
     ]
@@ -61,6 +66,7 @@ def main():
         exclusions=cfg.get("exclusions", {}),
         employee_target_hours=cfg.get("employeeTargetHours", {}),
         employee_max_hours=cfg.get("employeeMaxHours", {}),
+        posts=posts,
     )
 
     post_prefs = input_data.get("postPreferences", {})
@@ -72,6 +78,10 @@ def main():
     weekend_prefs = input_data.get("weekendPrefs", {})
     dow_prefs = input_data.get("dowPrefs", {})
     desired_dates = input_data.get("desiredDates", {})
+    soft_unavailable = input_data.get("softUnavailableDays", {})
+    avoid_with = input_data.get("avoidWith", {})
+    prefer_with = input_data.get("preferWith", {})
+    weights = input_data.get("weights", {})
 
     raw_fixed = cfg.get("fixedSlots") or {}
     fixed_slots: dict[int, dict[str, list[str]]] = {}
@@ -90,19 +100,30 @@ def main():
                 else:
                     fixed_slots[d][str(pid)] = []
 
-    solver = ScheduleSolver(
-        posts, employees, config,
-        post_preferences=post_prefs,
-        shift_preferences=shift_prefs,
-        shift_time_modes=shift_time_modes,
-        seniority_filter=seniority_filter,
-        weekday_prefs=weekday_prefs,
-        weekend_prefs=weekend_prefs,
-        dow_prefs=dow_prefs,
-        desired_dates=desired_dates,
-        fixed_slots=fixed_slots if fixed_slots else None,
-    )
+    # relax=True → покрытие постов становится мягким: солвер всегда выдаёт
+    # черновик с явным списком незакрытых слотов (см. ниже автo-fallback).
+    relax_requested = bool(input_data.get("relax", False))
 
+    def build_solver(relax: bool) -> ScheduleSolver:
+        return ScheduleSolver(
+            posts, employees, config,
+            post_preferences=post_prefs,
+            shift_preferences=shift_prefs,
+            shift_time_modes=shift_time_modes,
+            seniority_filter=seniority_filter,
+            weekday_prefs=weekday_prefs,
+            weekend_prefs=weekend_prefs,
+            dow_prefs=dow_prefs,
+            desired_dates=desired_dates,
+            soft_unavailable=soft_unavailable,
+            avoid_with=avoid_with,
+            prefer_with=prefer_with,
+            weights=weights,
+            fixed_slots=fixed_slots if fixed_slots else None,
+            relax=relax,
+        )
+
+    solver = build_solver(relax=relax_requested)
     result = solver.solve(time_limit_seconds=time_limit)
 
     if result is None:
@@ -115,13 +136,23 @@ def main():
                 )
             )
         else:
-            print(json.dumps({"error": "No solution found"}))
+            diagnostics = getattr(solver, "diagnostics", None) or []
+            print(
+                json.dumps(
+                    {"error": "No solution found", "diagnostics": diagnostics},
+                    ensure_ascii=False,
+                )
+            )
         sys.exit(0)
 
     output = {
         "schedule": {str(k): v for k, v in result["schedule"].items()},
         "employeeHours": result["employee_hours"],
     }
+    if result.get("relaxed"):
+        output["relaxed"] = True
+        output["unfilled"] = result.get("unfilled", [])
+        output["unfilledCount"] = result.get("unfilledCount", 0)
 
     print(json.dumps(output, ensure_ascii=False))
 
