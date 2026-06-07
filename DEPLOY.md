@@ -110,9 +110,62 @@ cp data/data_backup_ГГГГ-ММ-ДД_ЧЧММ.db data/data.db
 docker compose up -d
 ```
 
-## Бэкапы БД
+## Бэкапы БД (Timeweb S3, ежедневно)
 
-- Ручной: команда `cp data/data.db ...` из раздела выше.
-- Автоматический: `web/scripts/backup.sh` (cron, 03:00) — `.backup` SQLite и
-  загрузка в S3 Timeweb, если заданы переменные `S3_*`.
-- Чистка старых ручных бэкапов: `find data -name 'data_backup_*.db' -mtime +14 -delete`.
+Боевая БД ежедневно бэкапится в Timeweb S3 (бакет `cb8c8af2-...336635`,
+endpoint `https://s3.twcstorage.ru`, регион `ru-1`).
+
+- **Инструмент:** `rclone` (S3-remote `tws3`, конфиг `/root/.config/rclone/rclone.conf`,
+  права 600 — там ключи доступа, в git НЕ хранятся).
+- **Скрипт:** `/opt/raspisoshlyapa/backup-to-s3.sh` — консистентный снимок
+  `sqlite3 .backup` внутри контейнера → gzip → заливка как
+  `backups/data_<дата>.db.gz` → удаление в S3 копий старше 30 дней.
+- **Расписание:** cron `0 3 * * *` (03:00 UTC = 06:00 МСК),
+  лог `/var/log/db-backup.log`.
+- **Размер:** ~24 КБ на бэкап (gzip). За год ежедневных — порядка 9 МБ.
+
+Скрипт `backup-to-s3.sh` (если нужно воссоздать):
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+PROJECT=/opt/raspisoshlyapa
+CONTAINER=raspisoshlyapa-web-1
+REMOTE="tws3:cb8c8af2-e69f-45d2-af21-f096fe336635/backups"
+RETENTION="30d"
+cd "$PROJECT"; TS=$(date +%F_%H%M); SNAP="_snapshot_${TS}.db"
+docker exec "$CONTAINER" sqlite3 /app/data/data.db ".backup /app/data/${SNAP}"
+gzip -f "data/${SNAP}"
+rclone copyto "data/${SNAP}.gz" "${REMOTE}/data_${TS}.db.gz" --s3-no-check-bucket
+rm -f "data/${SNAP}.gz"
+rclone delete --min-age "$RETENTION" "$REMOTE" 2>/dev/null || true
+echo "[$(date)] backup uploaded: data_${TS}.db.gz"
+```
+
+rclone-конфиг `/root/.config/rclone/rclone.conf` (ключи — из панели Timeweb S3):
+
+```ini
+[tws3]
+type = s3
+provider = Other
+access_key_id = <S3 Access Key>
+secret_access_key = <S3 Secret Key>
+endpoint = https://s3.twcstorage.ru
+region = ru-1
+acl = private
+```
+
+Запустить бэкап вручную: `/opt/raspisoshlyapa/backup-to-s3.sh`.
+
+### Восстановление из S3
+
+```bash
+cd /opt/raspisoshlyapa
+rclone lsf tws3:cb8c8af2-e69f-45d2-af21-f096fe336635/backups/        # список бэкапов
+rclone copyto tws3:cb8c8af2-e69f-45d2-af21-f096fe336635/backups/data_<дата>.db.gz data/_restore.db.gz
+gunzip -f data/_restore.db.gz
+docker exec raspisoshlyapa-web-1 sqlite3 /app/data/_restore.db "PRAGMA integrity_check;"
+docker compose down
+cp data/_restore.db data/data.db && rm -f data/_restore.db
+docker compose up -d
+```
