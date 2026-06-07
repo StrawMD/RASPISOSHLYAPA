@@ -71,6 +71,10 @@ class Employee:
     # Личные лимиты за месяц (None = без лимита)
     max_nights: int | None = None
     max_full: int | None = None
+    # Желаемый минимум смен за месяц (мягкий пол; None = без минимума)
+    min_shifts: int | None = None
+    # Опт-ин: не ставить на один и тот же аппарат два дня подряд
+    avoid_same_post: bool = False
 
     def __hash__(self):
         return hash(self.name)

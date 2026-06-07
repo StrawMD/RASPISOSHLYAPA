@@ -29,9 +29,11 @@ import { computeTenure, yearsWord } from "@/lib/seniority";
 
 const MODALITIES = ["КТ", "МРТ"] as const;
 const PREF_LEVELS = [
-  { value: "prefer", label: "Предпочитаю", color: "text-green-500" },
+  { value: "prefer_strong", label: "Очень хочу", color: "text-green-500" },
+  { value: "prefer", label: "Скорее хочу", color: "text-green-400" },
   { value: "neutral", label: "Нейтрально", color: "text-muted-foreground" },
-  { value: "avoid", label: "Не ставить", color: "text-red-400" },
+  { value: "avoid", label: "Скорее не хочу", color: "text-amber-400" },
+  { value: "avoid_hard", label: "Просьба не ставить", color: "text-red-500" },
 ] as const;
 
 const CONSECUTIVE_OPTIONS = [
@@ -54,6 +56,14 @@ const DOW_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"] as c
 function prefLabel(v: string) {
   const pl = PREF_LEVELS.find((o) => o.value === v);
   return <span className={pl?.color ?? ""}>{pl?.label ?? v}</span>;
+}
+
+// Base UI отображает «сырое» value, если не передать функцию-ребёнка.
+function consecLabel(v: string) {
+  return CONSECUTIVE_OPTIONS.find((o) => o.value === v)?.label ?? v;
+}
+function medicalLabel(v: string) {
+  return MEDICAL_OPTIONS.find((o) => o.value === v)?.label ?? v;
 }
 
 type Employee = {
@@ -397,7 +407,7 @@ export function EmployeeManager({ initialEmployees, posts }: Props) {
                         }
                       >
                         <SelectTrigger>
-                          <SelectValue />
+                          <SelectValue>{medicalLabel}</SelectValue>
                         </SelectTrigger>
                         <SelectContent>
                           {MEDICAL_OPTIONS.map((o) => (
@@ -420,7 +430,7 @@ export function EmployeeManager({ initialEmployees, posts }: Props) {
                         }
                       >
                         <SelectTrigger>
-                          <SelectValue />
+                          <SelectValue>{consecLabel}</SelectValue>
                         </SelectTrigger>
                         <SelectContent>
                           {CONSECUTIVE_OPTIONS.map((o) => (

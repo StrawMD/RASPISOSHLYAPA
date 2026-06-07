@@ -54,9 +54,22 @@ const PREF3 = [
   { value: "avoid", label: "Не ставить" },
 ];
 
+// Предпочтения по аппаратам — 5 градаций. Центр «нейтрально».
+// Крайний «avoid_hard» = жёсткий запрет (солвер ставит только в крайнем
+// случае; админ может переопределить вручную/фикс-слотом).
+const POST_PREF5 = [
+  { value: "prefer_strong", label: "Очень хочу" },
+  { value: "prefer", label: "Скорее хочу" },
+  { value: "neutral", label: "Нейтрально" },
+  { value: "avoid", label: "Скорее не хочу" },
+  { value: "avoid_hard", label: "Просьба не ставить" },
+] as const;
+
 const PREF_COLOR: Record<string, string> = {
-  prefer: "text-green-500",
-  avoid: "text-red-400",
+  prefer_strong: "text-green-500",
+  prefer: "text-green-400",
+  avoid: "text-amber-400",
+  avoid_hard: "text-red-500",
   neutral: "text-muted-foreground",
   null: "text-muted-foreground",
 };
@@ -64,6 +77,11 @@ const PREF_COLOR: Record<string, string> = {
 const MODALITIES = ["КТ", "МРТ"] as const;
 const RATE_STEPS = [0.25, 0.5, 0.75, 1.0];
 const TARGET_RATE_STEPS = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
+const MAX_RATE_PRESETS = [1.0, 1.25, 1.5, 1.75, 2.0];
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
+}
 
 type ShiftTimeMode = "only_full" | "prefer_full" | "neutral" | "prefer_day";
 
@@ -123,13 +141,26 @@ function deriveLegacyShiftTimeMode(
 
 function prefLabel(v: string) {
   const label =
-    [...PREF_OPTIONS, ...PREF3].find((o) => o.value === v)?.label ?? v;
+    [...PREF_OPTIONS, ...PREF3, ...POST_PREF5].find((o) => o.value === v)
+      ?.label ?? v;
   const color = PREF_COLOR[v] ?? "";
   return <span className={color}>{label}</span>;
 }
 
 function shiftTimeModeLabel(v: string) {
   return SHIFT_TIME_MODE_OPTIONS.find((o) => o.value === v)?.label ?? v;
+}
+
+// Лейблы для триггеров селектов (Base UI отображает «сырое» value, если не
+// передать функцию-ребёнка — поэтому подставляем человекочитаемый текст).
+function consecLabel(v: string) {
+  return CONSECUTIVE_OPTIONS.find((o) => o.value === v)?.label ?? v;
+}
+function medicalLabel(v: string) {
+  return MEDICAL_OPTIONS.find((o) => o.value === v)?.label ?? v;
+}
+function loadLabel(v: string) {
+  return LOAD_OPTIONS.find((o) => o.value === v)?.label ?? v;
 }
 
 type Post = {
@@ -167,6 +198,8 @@ interface Props {
     loadPref: string | null;
     maxNights: number | null;
     maxFull: number | null;
+    minShifts: number | null;
+    avoidSamePost: boolean;
     avoidWith: string[];
     preferWith: string[];
   } | null;
@@ -195,6 +228,8 @@ interface Props {
     loadPref: string | null;
     maxNights: number | null;
     maxFull: number | null;
+    minShifts: number | null;
+    avoidSamePost: boolean;
     avoidWith: string[];
     preferWith: string[];
   } | null;
@@ -237,6 +272,9 @@ export function PreferencesForm({
   const [rate, setRate] = useState(initialRate);
   const [targetRate, setTargetRate] = useState(initialTargetRate);
   const [maxRate, setMaxRate] = useState(initialMaxRate);
+  const [maxRateCustom, setMaxRateCustom] = useState(
+    !MAX_RATE_PRESETS.includes(round2(initialMaxRate)),
+  );
   const [modalities, setModalities] = useState<string[]>(employee.modalities);
   const [can24h, setCan24h] = useState(employee.can24h);
   const [hospitalYearStr, setHospitalYearStr] = useState(() =>
@@ -299,6 +337,12 @@ export function PreferencesForm({
   );
   const [maxFullStr, setMaxFullStr] = useState(
     existing?.maxFull != null ? String(existing.maxFull) : "",
+  );
+  const [minShiftsStr, setMinShiftsStr] = useState(
+    existing?.minShifts != null ? String(existing.minShifts) : "",
+  );
+  const [avoidSamePost, setAvoidSamePost] = useState(
+    existing?.avoidSamePost ?? false,
   );
   const [avoidWith, setAvoidWith] = useState<string[]>(
     existing?.avoidWith ?? [],
@@ -364,9 +408,9 @@ export function PreferencesForm({
   function changeMaxRate(next: number) {
     if (readOnly) return;
     if (Number.isNaN(next)) return;
-    const clamped = Math.max(next, rate);
+    const clamped = round2(Math.min(2.0, Math.max(next, rate)));
     setMaxRate(clamped);
-    setTargetRate((t) => Math.min(t, clamped));
+    setTargetRate((t) => Math.min(Math.max(t, rate), clamped));
   }
 
   function removeFrom(
@@ -465,6 +509,10 @@ export function PreferencesForm({
     setLoadPref(previous.loadPref ?? "normal");
     setMaxNightsStr(previous.maxNights != null ? String(previous.maxNights) : "");
     setMaxFullStr(previous.maxFull != null ? String(previous.maxFull) : "");
+    setMinShiftsStr(
+      previous.minShifts != null ? String(previous.minShifts) : "",
+    );
+    setAvoidSamePost(previous.avoidSamePost ?? false);
     setAvoidWith(previous.avoidWith ?? []);
     setPreferWith(previous.preferWith ?? []);
     toast.success("Скопировано с прошлого месяца — проверьте и сохраните");
@@ -572,6 +620,8 @@ export function PreferencesForm({
             loadPref: loadPref === "normal" ? null : loadPref,
             maxNights: parseCap(maxNightsStr),
             maxFull: parseCap(maxFullStr),
+            minShifts: parseCap(minShiftsStr),
+            avoidSamePost,
             avoidWith,
             preferWith,
           }),
@@ -727,17 +777,53 @@ export function PreferencesForm({
             </div>
             <div className="space-y-1.5">
               <Label>Макс. ставка (потолок)</Label>
-              <Input
-                type="number"
-                step={0.25}
-                min={rate}
-                max={2.0}
-                value={maxRate}
-                onChange={(e) => changeMaxRate(parseFloat(e.target.value))}
+              <Select
+                value={maxRateCustom ? "custom" : String(maxRate)}
+                onValueChange={(v) => {
+                  if (!v) return;
+                  if (v === "custom") {
+                    setMaxRateCustom(true);
+                    return;
+                  }
+                  setMaxRateCustom(false);
+                  changeMaxRate(parseFloat(v));
+                }}
                 disabled={readOnly}
-              />
+              >
+                <SelectTrigger>
+                  <SelectValue>
+                    {(v: string) =>
+                      v === "custom" ? "Своё значение" : v
+                    }
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent>
+                  {MAX_RATE_PRESETS.map((r) => (
+                    <SelectItem key={r} value={String(r)}>
+                      {r}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="custom">Своё значение…</SelectItem>
+                </SelectContent>
+              </Select>
+              {maxRateCustom && (
+                <Input
+                  type="number"
+                  step={0.05}
+                  min={rate}
+                  max={2.0}
+                  value={maxRate}
+                  onChange={(e) => changeMaxRate(parseFloat(e.target.value))}
+                  onBlur={(e) => {
+                    const n = parseFloat(e.target.value);
+                    if (!Number.isNaN(n)) changeMaxRate(n);
+                  }}
+                  disabled={readOnly}
+                  placeholder="до 2.00"
+                />
+              )}
               <p className="text-[11px] text-muted-foreground">
-                Абсолютный потолок допустимой переработки.
+                Абсолютный потолок переработки. Максимум 2.0.
               </p>
             </div>
           </div>
@@ -800,7 +886,7 @@ export function PreferencesForm({
               disabled={readOnly}
             >
               <SelectTrigger className="w-full sm:w-80">
-                <SelectValue />
+                <SelectValue>{consecLabel}</SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {CONSECUTIVE_OPTIONS.map((o) => (
@@ -824,7 +910,7 @@ export function PreferencesForm({
               disabled={readOnly}
             >
               <SelectTrigger className="w-full sm:w-80">
-                <SelectValue />
+                <SelectValue>{medicalLabel}</SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {MEDICAL_OPTIONS.map((o) => (
@@ -937,8 +1023,20 @@ export function PreferencesForm({
             <CardTitle className="text-base">
               Предпочтения по аппаратам
             </CardTitle>
+            <CardDescription>
+              «Просьба не ставить» — солвер не поставит вас на этот аппарат,
+              кроме крайнего случая (и админ может переопределить вручную).
+            </CardDescription>
           </CardHeader>
           <CardContent className="space-y-1">
+            <label className="flex items-center gap-2 text-sm cursor-pointer pb-2">
+              <Checkbox
+                checked={avoidSamePost}
+                disabled={readOnly}
+                onCheckedChange={(c) => setAvoidSamePost(!!c)}
+              />
+              Не ставить меня на один и тот же аппарат два дня подряд
+            </label>
             {visiblePosts.map((post) => (
               <div
                 key={post.id}
@@ -960,11 +1058,11 @@ export function PreferencesForm({
                   }}
                   disabled={readOnly}
                 >
-                  <SelectTrigger className="w-36 h-7 text-xs">
+                  <SelectTrigger className="w-44 h-7 text-xs">
                     <SelectValue>{prefLabel}</SelectValue>
                   </SelectTrigger>
                   <SelectContent>
-                    {PREF3.map((o) => (
+                    {POST_PREF5.map((o) => (
                       <SelectItem key={o.value} value={o.value}>
                         <span className={PREF_COLOR[o.value] ?? ""}>
                           {o.label}
@@ -996,7 +1094,7 @@ export function PreferencesForm({
               disabled={readOnly}
             >
               <SelectTrigger className="w-full sm:w-80">
-                <SelectValue />
+                <SelectValue>{loadLabel}</SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {LOAD_OPTIONS.map((o) => (
@@ -1006,6 +1104,25 @@ export function PreferencesForm({
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="space-y-1.5 sm:max-w-xs">
+            <Label>Минимум смен за месяц</Label>
+            <Input
+              type="text"
+              inputMode="numeric"
+              placeholder="без минимума"
+              value={minShiftsStr}
+              onChange={(e) =>
+                setMinShiftsStr(e.target.value.replace(/\D/g, "").slice(0, 2))
+              }
+              disabled={readOnly}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              «Хочу заработать»: график постарается дать вам не меньше этого
+              числа смен, если хватает свободных мест (мягкое пожелание, не
+              гарантия).
+            </p>
           </div>
 
           {has24h && (
@@ -1095,15 +1212,16 @@ export function PreferencesForm({
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-7 gap-1">
+          <div className="space-y-1.5">
             {DAY_NAMES.map((name, i) => {
               const key = String(i + 1);
               const val = dowPrefs[key] ?? "neutral";
               return (
-                <div key={key} className="text-center">
-                  <div className="text-xs font-medium text-muted-foreground mb-1">
-                    {name}
-                  </div>
+                <div
+                  key={key}
+                  className="flex items-center gap-3 rounded border px-3 py-1.5 text-sm"
+                >
+                  <span className="flex-1 font-medium">{name}</span>
                   <Select
                     value={val}
                     onValueChange={(v) => {
@@ -1116,7 +1234,7 @@ export function PreferencesForm({
                     }}
                     disabled={readOnly}
                   >
-                    <SelectTrigger className="h-7 text-[10px] px-1">
+                    <SelectTrigger className="w-40 h-7 text-xs">
                       <SelectValue>{prefLabel}</SelectValue>
                     </SelectTrigger>
                     <SelectContent>

@@ -16,7 +16,9 @@ export const DEFAULT_WEIGHTS: Record<string, number> = {
   full_reward: 500,
   partial_penalty: 200,
   post_prefer: 30,
+  post_prefer_strong: 80,
   post_avoid: 50,
+  post_ban: 80000,
   legacy_24h_prefer: 120,
   shift_time_bias: 600,
   weekend_fairness: 30,
@@ -28,6 +30,8 @@ export const DEFAULT_WEIGHTS: Record<string, number> = {
   soft_unavailable: 200,
   avoid_with: 300,
   prefer_with: 40,
+  same_post_repeat: 40,
+  min_shifts_short: 600,
 };
 
 export interface WeightMeta {
@@ -81,16 +85,20 @@ export const WEIGHT_GROUPS: WeightGroup[] = [
     description:
       "Эти факторы по величине обычно меньше часов — это тонкая настройка.",
     weights: [
-      { key: "post_prefer", label: "Предпочитаемый аппарат", hint: "База; усиливается стажем.", max: 300, toggleable: true },
-      { key: "post_avoid", label: "Нежелательный аппарат", hint: "База; усиливается стажем.", max: 300, toggleable: true },
+      { key: "post_prefer", label: "Аппарат «скорее хочу»", hint: "База; усиливается стажем.", max: 300, toggleable: true },
+      { key: "post_prefer_strong", label: "Аппарат «очень хочу»", hint: "Сильнее обычного «хочу»; усиливается стажем.", max: 500, toggleable: true },
+      { key: "post_avoid", label: "Аппарат «скорее не хочу»", hint: "Мягкий штраф; усиливается стажем.", max: 300, toggleable: true },
+      { key: "post_ban", label: "Аппарат «просьба не ставить»", hint: "Квази-запрет: огромный штраф, солвер ставит лишь в крайнем случае. Админ может переопределить вручную/фикс-слотом.", max: 200000, toggleable: false },
       { key: "weekday_prefer", label: "Предпочтение будней/выходных", hint: "", max: 200, toggleable: true },
       { key: "weekday_avoid", label: "Избегание будней/выходных", hint: "", max: 300, toggleable: true },
       { key: "dow_prefer", label: "Предпочтение дня недели", hint: "", max: 200, toggleable: true },
       { key: "dow_avoid", label: "Избегание дня недели", hint: "", max: 300, toggleable: true },
       { key: "desired_date", label: "Желаемая дата", hint: "", max: 300, toggleable: true },
       { key: "soft_unavailable", label: "Мягко нежелательный день", hint: "Штраф за работу в день «лучше не ставить».", max: 1000, toggleable: true },
-      { key: "avoid_with", label: "Не ставить с коллегой", hint: "", max: 1000, toggleable: true },
-      { key: "prefer_with", label: "Хочу работать с коллегой", hint: "", max: 400, toggleable: true },
+      { key: "avoid_with", label: "Не ставить с коллегой", hint: "В одном кабинете (на одном посту) в один день.", max: 1000, toggleable: true },
+      { key: "prefer_with", label: "Хочу работать с коллегой", hint: "В одном кабинете (на одном посту) в один день.", max: 400, toggleable: true },
+      { key: "same_post_repeat", label: "Тот же аппарат два дня подряд", hint: "Сила штрафа за повтор аппарата в соседние дни. Применяется только к тем, кто сам отметил это пожелание.", max: 400, toggleable: true },
+      { key: "min_shifts_short", label: "Недобор до минимума смен", hint: "Сила пожелания «хочу не меньше N смен». Подтягивает вверх при наличии мест.", max: 3000, toggleable: true },
     ],
   },
 ];

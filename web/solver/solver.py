@@ -50,8 +50,10 @@ DEFAULT_WEIGHTS: dict[str, int] = {
     "rest2": 80,                 # желателен 2-й день отдыха после суток/ночи
     "full_reward": 500,          # награда за монолитные сутки (с)
     "partial_penalty": 200,      # штраф за дробление суток на (д)+(н)
-    "post_prefer": 30,           # база: предпочитаемый пост
-    "post_avoid": 50,            # база: нежелательный пост
+    "post_prefer": 30,           # база: предпочитаемый пост (скорее хочу)
+    "post_prefer_strong": 80,    # база: очень предпочитаемый пост
+    "post_avoid": 50,            # база: нежелательный пост (скорее не хочу)
+    "post_ban": 80000,           # «просьба не ставить»: квази-запрет (override админом)
     "legacy_24h_prefer": 120,    # легаси: «предпочитаю» по типам 24ч-смен
     "shift_time_bias": 600,      # сила режима prefer_full / prefer_day
     "weekend_fairness": 30,      # равномерность выходных между людьми
@@ -63,6 +65,8 @@ DEFAULT_WEIGHTS: dict[str, int] = {
     "soft_unavailable": 200,     # штраф за работу в «мягко нежелательный» день
     "avoid_with": 300,           # штраф за совместную смену с нежелательным коллегой
     "prefer_with": 40,           # награда за совместную смену с желаемым коллегой
+    "same_post_repeat": 40,      # штраф за один и тот же аппарат два дня подряд
+    "min_shifts_short": 600,     # штраф за каждую смену ниже желаемого минимума
     "understaff": 100000,        # релаксация: штраф за каждый незакрытый слот
 }
 
@@ -128,6 +132,7 @@ class ScheduleSolver:
         self._penalties: list = []
         self.diagnostics: list[str] = []
         self._worked: dict[tuple[int, int], cp_model.IntVar | None] = {}
+        self._post_worked: dict[tuple[int, int, int], cp_model.IntVar | None] = {}
         self._build()
 
     # ------------------------------------------------------------------
@@ -174,6 +179,33 @@ class ScheduleSolver:
         self._worked[key] = w
         return w
 
+    def _post_day_vars(self, e: int, d: int, p: int) -> list:
+        """Все переменные «сотрудник e на посту p в день d» (12ч/сутки/день/ночь)."""
+        if p in self._24h_pidxs:
+            vs = []
+            for dd in (self.xf, self.xd, self.xn):
+                if (e, d, p) in dd:
+                    vs.append(dd[e, d, p])
+            return vs
+        return [self.x[e, d, p]] if (e, d, p) in self.x else []
+
+    def _post_day_var(self, e: int, d: int, p: int):
+        """Bool «сотрудник e работает на посту p в день d» (с кэшированием)."""
+        key = (e, d, p)
+        if key in self._post_worked:
+            return self._post_worked[key]
+        vs = self._post_day_vars(e, d, p)
+        if not vs:
+            self._post_worked[key] = None
+            return None
+        if len(vs) == 1:
+            self._post_worked[key] = vs[0]
+            return vs[0]
+        w = self.model.new_bool_var(f"pw_{e}_{d}_{p}")
+        self.model.add_max_equality(w, vs)
+        self._post_worked[key] = w
+        return w
+
     def _hour_terms(self, e: int) -> list:
         terms = []
         for d in self.config.days:
@@ -203,6 +235,7 @@ class ScheduleSolver:
         self._max_hours()
         self._personal_shift_caps()
         self._hour_target_penalty()
+        self._min_shifts_floor()
         self._consecutive_sequencing()
         self._prefer_2day_rest()
         self._prefer_full_shifts()
@@ -214,6 +247,7 @@ class ScheduleSolver:
         self._day_of_week_penalty()
         self._desired_dates_bonus()
         self._soft_unavailable_penalty()
+        self._avoid_same_post_consecutive()
         self._pairing_penalty()
 
         if self._penalties:
@@ -253,7 +287,9 @@ class ScheduleSolver:
                         # (can_24h=False) или мед-ограничение. "only_full"
                         # сохраняет xf — в этом режиме блокируются прочие смены.
                         can_full = True
-                        if self.seniority_filter and emp.hospital_years < 5:
+                        # Фильтр суточных по ОБЩЕМУ стажу в профессии (career_years),
+                        # а не только по стажу в этой больнице.
+                        if self.seniority_filter and emp.career_years < 5:
                             can_full = False
                         if sp.get("pref_24h_full") is False:
                             can_full = False
@@ -520,6 +556,58 @@ class ScheduleSolver:
                 if nvars:
                     self.model.add(sum(nvars) <= mn)
 
+    def _min_shifts_floor(self):
+        """Мягкий пол по числу смен: «хочу заработать не меньше N смен».
+
+        Реализован как штраф за недобор ниже минимума (не жёсткое
+        ограничение), поэтому никогда не делает задачу нерешаемой и не ломает
+        баланс часов — лишь подтягивает человека вверх, когда есть свободные
+        места. Жёсткий потолок часов (max_hours) по-прежнему ограничивает
+        сверху, так что недостижимый минимум просто частично штрафуется.
+        """
+        w = self.W["min_shifts_short"]
+        if not w:
+            return
+        for e, emp in enumerate(self.employees):
+            m = getattr(emp, "min_shifts", None)
+            if not m or m <= 0:
+                continue
+            worked = [self._worked_var(e, d) for d in self.config.days]
+            worked = [v for v in worked if v is not None]
+            if not worked:
+                continue
+            cap = min(int(m), len(worked))
+            short = self.model.new_int_var(0, cap, f"minsh_{e}")
+            # short >= m - сумма_смен  (и short >= 0) → при минимизации
+            # short = max(0, m - факт).
+            self.model.add(short >= cap - sum(worked))
+            self._penalties.append(w * short)
+
+    def _avoid_same_post_consecutive(self):
+        """Мягкий штраф за один и тот же аппарат два дня подряд.
+
+        Применяется ТОЛЬКО к сотрудникам, которые сами отметили это пожелание
+        (avoid_same_post=True). По умолчанию выключено. Сила — вес
+        same_post_repeat (можно выключить глобально = 0).
+        """
+        w = self.W["same_post_repeat"]
+        if not w:
+            return
+        days = self.config.days
+        for e, emp in enumerate(self.employees):
+            if not getattr(emp, "avoid_same_post", False):
+                continue
+            for p in range(len(self.posts)):
+                for i in range(len(days) - 1):
+                    d, dn = days[i], days[i + 1]
+                    a = self._post_day_var(e, d, p)
+                    b = self._post_day_var(e, dn, p)
+                    if a is None or b is None:
+                        continue
+                    both = self.model.new_bool_var(f"samepost_{e}_{p}_{d}")
+                    self.model.add_min_equality(both, [a, b])
+                    self._penalties.append(w * both)
+
     def _consecutive_sequencing(self):
         """Персональная очерёдность смен.
 
@@ -642,18 +730,31 @@ class ScheduleSolver:
 
             # 60 score → +30 weight on top of base (roughly doubles weight).
             senior_bonus = emp.seniority_score // 2
-            base_prefer = self.W["post_prefer"]
-            base_avoid = self.W["post_avoid"]
+
+            # 5 градаций предпочтения по аппарату:
+            #   prefer_strong — очень хочу (большая награда)
+            #   prefer        — скорее хочу (награда)
+            #   neutral       — без влияния
+            #   avoid         — скорее не хочу (мягкий штраф)
+            #   avoid_hard    — просьба не ставить (квази-запрет, override
+            #                   админом через фикс-слот/ручную правку)
+            def level_weight(level: str) -> int:
+                if level == "prefer_strong":
+                    return -(self.W["post_prefer_strong"] + senior_bonus)
+                if level == "prefer":
+                    return -(self.W["post_prefer"] + senior_bonus)
+                if level == "avoid":
+                    return self.W["post_avoid"] + senior_bonus
+                if level == "avoid_hard":
+                    return self.W["post_ban"]
+                return 0
 
             for d in self.config.days:
                 for p, post in enumerate(self.posts):
                     level = prefs.get(post.id, "neutral")
-                    if level == "neutral":
+                    w = level_weight(level)
+                    if w == 0:
                         continue
-                    if level == "prefer":
-                        w = -(base_prefer + senior_bonus)
-                    else:  # avoid
-                        w = base_avoid + senior_bonus
                     if p in self._24h_pidxs:
                         for dd in (self.xf, self.xd, self.xn):
                             if (e, d, p) in dd:
@@ -870,8 +971,15 @@ class ScheduleSolver:
                     self._penalties.append(w * v)
 
     def _pairing_penalty(self):
-        """Парные пожелания: avoidWith — штраф за совместный рабочий день,
-        preferWith — награда. «В одну смену» аппроксимируется «в один день»."""
+        """Парные пожелания на уровне ОДНОГО кабинета (поста).
+
+        «Хочу вместе» / «не вместе» означает работать в одном кабинете в один
+        день (а не просто где-то в большой больнице в один день — там люди
+        друг друга и не видят). Поэтому учитываем совпадение по конкретному
+        посту: оба работают на одном p в день d.
+          avoidWith  → штраф за совместную работу в одном кабинете;
+          preferWith → награда за неё.
+        """
         name_idx = {emp.name: i for i, emp in enumerate(self.employees)}
         wa = self.W["avoid_with"]
         wp = self.W["prefer_with"]
@@ -889,27 +997,24 @@ class ScheduleSolver:
                     seen.add(key)
                     yield key
 
-        if wa:
-            for (e, f) in _pairs(self.avoid_with):
-                for d in self.config.days:
-                    a = self._worked_var(e, d)
-                    b = self._worked_var(f, d)
+        def _same_post_terms(e: int, f: int, weight: int, sign: int, tag: str):
+            for d in self.config.days:
+                for p in range(len(self.posts)):
+                    a = self._post_day_var(e, d, p)
+                    b = self._post_day_var(f, d, p)
                     if a is None or b is None:
                         continue
-                    both = self.model.new_bool_var(f"avw_{e}_{f}_{d}")
+                    both = self.model.new_bool_var(f"{tag}_{e}_{f}_{d}_{p}")
                     self.model.add_min_equality(both, [a, b])
-                    self._penalties.append(wa * both)
+                    self._penalties.append(sign * weight * both)
+
+        if wa:
+            for (e, f) in _pairs(self.avoid_with):
+                _same_post_terms(e, f, wa, 1, "avw")
 
         if wp:
             for (e, f) in _pairs(self.prefer_with):
-                for d in self.config.days:
-                    a = self._worked_var(e, d)
-                    b = self._worked_var(f, d)
-                    if a is None or b is None:
-                        continue
-                    both = self.model.new_bool_var(f"prw_{e}_{f}_{d}")
-                    self.model.add_min_equality(both, [a, b])
-                    self._penalties.append(-wp * both)
+                _same_post_terms(e, f, wp, -1, "prw")
 
     # ------------------------------------------------------------------
     #  Запуск

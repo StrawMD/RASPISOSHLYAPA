@@ -30,9 +30,11 @@ export async function POST(req: NextRequest) {
     pref24hFull, pref24hDay, pref24hNight, shiftTimeMode,
     postPreferences, unavailableDays, weekdayPref, weekendPref,
     dayOfWeekPrefs, desiredDates, comment,
-    softUnavailableDays, loadPref, maxNights, maxFull,
-    avoidWith, preferWith,
+    softUnavailableDays, loadPref, maxNights, maxFull, minShifts,
+    avoidWith, preferWith, avoidSamePost,
   } = body;
+
+  const normAvoidSamePost = Boolean(avoidSamePost);
 
   const ALLOWED_MODES = new Set([
     "only_full",
@@ -141,6 +143,8 @@ export async function POST(req: NextRequest) {
       loadPref: normalizedLoadPref,
       maxNights: toCap(maxNights),
       maxFull: toCap(maxFull),
+      minShifts: toCap(minShifts),
+      avoidSamePost: normAvoidSamePost,
       avoidWith: JSON.stringify(normAvoidWith),
       preferWith: JSON.stringify(normPreferWith),
       submittedAt: new Date(),
@@ -164,6 +168,8 @@ export async function POST(req: NextRequest) {
       loadPref: normalizedLoadPref,
       maxNights: toCap(maxNights),
       maxFull: toCap(maxFull),
+      minShifts: toCap(minShifts),
+      avoidSamePost: normAvoidSamePost,
       avoidWith: JSON.stringify(normAvoidWith),
       preferWith: JSON.stringify(normPreferWith),
     },

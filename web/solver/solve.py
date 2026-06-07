@@ -52,6 +52,8 @@ def main():
             can_24h=bool(e.get("can24h", True)),
             max_nights=e.get("maxNights"),
             max_full=e.get("maxFull"),
+            min_shifts=e.get("minShifts"),
+            avoid_same_post=bool(e.get("avoidSamePost", False)),
         )
         for e in input_data["employees"]
     ]

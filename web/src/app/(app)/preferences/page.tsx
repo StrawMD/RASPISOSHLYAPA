@@ -89,6 +89,8 @@ export default async function PreferencesPage() {
         loadPref: prevPref.loadPref,
         maxNights: prevPref.maxNights,
         maxFull: prevPref.maxFull,
+        minShifts: prevPref.minShifts,
+        avoidSamePost: prevPref.avoidSamePost,
         avoidWith: safeJson(prevPref.avoidWith, []),
         preferWith: safeJson(prevPref.preferWith, []),
       }
@@ -146,6 +148,8 @@ export default async function PreferencesPage() {
                 loadPref: existing.loadPref,
                 maxNights: existing.maxNights,
                 maxFull: existing.maxFull,
+                minShifts: existing.minShifts,
+                avoidSamePost: existing.avoidSamePost,
                 avoidWith: safeJson(existing.avoidWith, []),
                 preferWith: safeJson(existing.preferWith, []),
               }

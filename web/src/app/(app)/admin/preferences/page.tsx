@@ -102,6 +102,7 @@ export default async function AdminPreferencesPage() {
                 <th className="py-1.5 pr-3">Очерёдность</th>
                 <th className="py-1.5 pr-3">Мед.</th>
                 <th className="py-1.5 pr-3">Нагрузка</th>
+                <th className="py-1.5 pr-3">Мин. смен</th>
               </tr>
             </thead>
             <tbody>
@@ -135,6 +136,9 @@ export default async function AdminPreferencesPage() {
                     </td>
                     <td className="py-1.5 pr-3 text-xs text-amber-500">{med}</td>
                     <td className="py-1.5 pr-3 text-xs">{load}</td>
+                    <td className="py-1.5 pr-3 tabular-nums text-xs">
+                      {p?.minShifts ? `≥ ${p.minShifts}` : ""}
+                    </td>
                   </tr>
                 );
               })}

@@ -29,6 +29,8 @@ export interface SolverInput {
     can24h?: boolean;
     maxNights?: number | null;
     maxFull?: number | null;
+    minShifts?: number | null;
+    avoidSamePost?: boolean;
   }[];
   config: {
     year: number;

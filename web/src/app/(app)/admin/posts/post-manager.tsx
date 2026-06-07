@@ -297,7 +297,9 @@ function SortablePostCard({
                   }
                 >
                   <SelectTrigger>
-                    <SelectValue />
+                    <SelectValue>
+                      {(v: string) => (v === "none" ? "—" : v)}
+                    </SelectValue>
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="none">—</SelectItem>

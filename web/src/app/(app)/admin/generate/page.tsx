@@ -196,7 +196,7 @@ export default function GeneratePage() {
               checked={seniorityFilter}
               onCheckedChange={(c) => setSeniorityFilter(!!c)}
             />
-            Суточные (с) только для стажа &ge; 5 лет
+            Суточные (с) только при общем стаже &ge; 5 лет
           </label>
 
           <Button

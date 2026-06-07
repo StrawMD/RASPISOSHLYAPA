@@ -173,6 +173,8 @@ export async function POST(req: NextRequest) {
   const loadPrefByName: Record<string, string> = {};
   const maxNightsByName: Record<string, number> = {};
   const maxFullByName: Record<string, number> = {};
+  const minShiftsByName: Record<string, number> = {};
+  const avoidSamePostByName: Record<string, boolean> = {};
 
   function deriveLegacyShiftTimeMode(
     full: string | null,
@@ -260,6 +262,9 @@ export async function POST(req: NextRequest) {
     if (pref.loadPref) loadPrefByName[emp.name] = pref.loadPref;
     if (typeof pref.maxNights === "number") maxNightsByName[emp.name] = pref.maxNights;
     if (typeof pref.maxFull === "number") maxFullByName[emp.name] = pref.maxFull;
+    if (typeof pref.minShifts === "number" && pref.minShifts > 0)
+      minShiftsByName[emp.name] = pref.minShifts;
+    if (pref.avoidSamePost) avoidSamePostByName[emp.name] = true;
   }
 
   // Регулярная недельная недоступность (профиль) → раскрываем в дни месяца.
@@ -374,6 +379,8 @@ export async function POST(req: NextRequest) {
         can24h: e.can24h,
         maxNights: maxNightsByName[e.name] ?? null,
         maxFull: maxFullByName[e.name] ?? null,
+        minShifts: minShiftsByName[e.name] ?? null,
+        avoidSamePost: avoidSamePostByName[e.name] ?? false,
       };
     }),
     config: {
