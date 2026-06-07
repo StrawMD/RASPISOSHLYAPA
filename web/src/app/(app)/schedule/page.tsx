@@ -61,7 +61,26 @@ export default async function SchedulePage({ searchParams }: Props) {
     });
   }
 
-  const posts = await prisma.post.findMany({ orderBy: { sortOrder: "asc" } });
+  const allPosts = await prisma.post.findMany({ orderBy: { sortOrder: "asc" } });
+
+  const scheduleData: Record<string, Record<string, string[]>> | null =
+    publishedVersion?.data ? JSON.parse(publishedVersion.data) : null;
+
+  // Посты, у которых есть назначения в показываемом расписании (чтобы не прятать историю).
+  const postsWithData = new Set<string>();
+  if (scheduleData) {
+    for (const byPost of Object.values(scheduleData)) {
+      for (const [postId, people] of Object.entries(byPost)) {
+        if (Array.isArray(people) && people.length > 0) postsWithData.add(postId);
+      }
+    }
+  }
+
+  // Скрываем отключённые посты (неактивны и в будни, и в выходные), если в этом
+  // расписании по ним нет назначений.
+  const posts = allPosts.filter(
+    (p) => p.weekdayActive || p.weekendActive || postsWithData.has(p.id)
+  );
 
   return (
     <ScheduleView
@@ -71,7 +90,7 @@ export default async function SchedulePage({ searchParams }: Props) {
         year: m.year,
         month: m.month,
       }))}
-      schedule={publishedVersion?.data ? JSON.parse(publishedVersion.data) : null}
+      schedule={scheduleData}
       employeeHours={
         publishedVersion?.employeeHours
           ? JSON.parse(publishedVersion.employeeHours)
