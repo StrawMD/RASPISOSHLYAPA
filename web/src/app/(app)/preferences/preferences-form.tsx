@@ -54,6 +54,22 @@ const PREF3 = [
   { value: "avoid", label: "Не ставить" },
 ];
 
+// Компактные градации для типов смен (с/д/н) на суточных постах.
+const SHIFT_KIND3 = [
+  { value: "prefer", label: "Хочу" },
+  { value: "neutral", label: "Нейтр." },
+  { value: "avoid", label: "Не хочу" },
+] as const;
+
+// Типы смен на суточном посту.
+const SHIFT_KINDS = [
+  { key: "full", label: "Сутки (с)" },
+  { key: "day", label: "День (д)" },
+  { key: "night", label: "Ночь (н)" },
+] as const;
+
+type ShiftKind = (typeof SHIFT_KINDS)[number]["key"];
+
 // Предпочтения по аппаратам — 5 градаций. Центр «нейтрально».
 // Крайний «avoid_hard» = жёсткий запрет (солвер ставит только в крайнем
 // случае; админ может переопределить вручную/фикс-слотом).
@@ -83,13 +99,19 @@ function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
-type ShiftTimeMode = "only_full" | "prefer_full" | "neutral" | "prefer_day";
+type ShiftTimeMode =
+  | "only_full"
+  | "prefer_full"
+  | "neutral"
+  | "prefer_day"
+  | "prefer_night";
 
 const SHIFT_TIME_MODE_OPTIONS: { value: ShiftTimeMode; label: string }[] = [
   { value: "only_full", label: "Только суточные" },
   { value: "prefer_full", label: "Предпочитаю суточные" },
   { value: "neutral", label: "Нейтрально" },
   { value: "prefer_day", label: "Предпочитаю дневные" },
+  { value: "prefer_night", label: "Предпочитаю ночные" },
 ];
 
 function isShiftTimeMode(v: unknown): v is ShiftTimeMode {
@@ -97,7 +119,8 @@ function isShiftTimeMode(v: unknown): v is ShiftTimeMode {
     v === "only_full" ||
     v === "prefer_full" ||
     v === "neutral" ||
-    v === "prefer_day"
+    v === "prefer_day" ||
+    v === "prefer_night"
   );
 }
 
@@ -162,6 +185,11 @@ function medicalLabel(v: string) {
 function loadLabel(v: string) {
   return LOAD_OPTIONS.find((o) => o.value === v)?.label ?? v;
 }
+function shiftKindLabel(v: string) {
+  const o = SHIFT_KIND3.find((o) => o.value === v);
+  const color = PREF_COLOR[v] ?? "";
+  return <span className={color}>{o?.label ?? v}</span>;
+}
 
 type Post = {
   id: string;
@@ -193,6 +221,8 @@ interface Props {
     weekdayPref: string | null;
     weekendPref: string | null;
     dayOfWeekPrefs: Record<string, string>;
+    postShiftPrefs: Record<string, Record<string, string>>;
+    dowShiftAvoid: Record<string, Record<string, boolean>>;
     softUnavailableDays: number[];
     consecutivePrefOverride: string | null;
     loadPref: string | null;
@@ -217,6 +247,8 @@ interface Props {
     pref24hNight: string | null;
     shiftTimeMode: string | null;
     postPreferences: Record<string, string>;
+    postShiftPrefs: Record<string, Record<string, string>>;
+    dowShiftAvoid: Record<string, Record<string, boolean>>;
     unavailableDays: number[];
     weekdayPref: string | null;
     weekendPref: string | null;
@@ -298,6 +330,14 @@ export function PreferencesForm({
   const [postPrefs, setPostPrefs] = useState<Record<string, string>>(
     existing?.postPreferences ?? {},
   );
+  // Пожелания по типам смен на суточных постах: {postId: {full|day|night: lvl}}
+  const [postShiftPrefs, setPostShiftPrefs] = useState<
+    Record<string, Record<string, string>>
+  >(existing?.postShiftPrefs ?? {});
+  // Не ставить тип смены в день недели: {dow("1".."7"): {full?|night?: true}}
+  const [dowShiftAvoid, setDowShiftAvoid] = useState<
+    Record<string, Record<string, boolean>>
+  >(existing?.dowShiftAvoid ?? {});
   const [unavailable, setUnavailable] = useState<Set<number>>(
     new Set(existing?.unavailableDays ?? []),
   );
@@ -480,6 +520,32 @@ export function PreferencesForm({
     });
   }
 
+  function setPostShiftPref(postId: string, kind: ShiftKind, v: string) {
+    if (readOnly) return;
+    setPostShiftPrefs((prev) => {
+      const cur = { ...(prev[postId] ?? {}) };
+      if (v === "neutral") delete cur[kind];
+      else cur[kind] = v;
+      const next = { ...prev };
+      if (Object.keys(cur).length === 0) delete next[postId];
+      else next[postId] = cur;
+      return next;
+    });
+  }
+
+  function toggleDowShiftAvoid(dowKey: string, kind: "full" | "night") {
+    if (readOnly) return;
+    setDowShiftAvoid((prev) => {
+      const cur = { ...(prev[dowKey] ?? {}) };
+      if (cur[kind]) delete cur[kind];
+      else cur[kind] = true;
+      const next = { ...prev };
+      if (Object.keys(cur).length === 0) delete next[dowKey];
+      else next[dowKey] = cur;
+      return next;
+    });
+  }
+
   function toggleAvoidWith(name: string) {
     if (readOnly) return;
     setAvoidWith((prev) =>
@@ -502,6 +568,8 @@ export function PreferencesForm({
       setShiftTimeMode(previous.shiftTimeMode as ShiftTimeMode);
     }
     setPostPrefs(previous.postPreferences ?? {});
+    setPostShiftPrefs(previous.postShiftPrefs ?? {});
+    setDowShiftAvoid(previous.dowShiftAvoid ?? {});
     setWeekdayPref(previous.weekdayPref ?? "null");
     setWeekendPref(previous.weekendPref ?? "null");
     setDowPrefs(previous.dayOfWeekPrefs ?? {});
@@ -585,10 +653,22 @@ export function PreferencesForm({
       }
 
       if (!readOnly) {
-        const filteredPostPrefs: Record<string, string> = {};
         const visibleIds = new Set(visiblePosts.map((p) => p.id));
+        const twentyFourIds = new Set(
+          visiblePosts.filter((p) => p.shiftHours === 24).map((p) => p.id),
+        );
+        // Обычные (12ч) посты идут в postPreferences; суточные — в postShiftPrefs.
+        const filteredPostPrefs: Record<string, string> = {};
         for (const [pid, v] of Object.entries(postPrefs)) {
-          if (visibleIds.has(pid)) filteredPostPrefs[pid] = v;
+          if (visibleIds.has(pid) && !twentyFourIds.has(pid)) {
+            filteredPostPrefs[pid] = v;
+          }
+        }
+        const filteredPostShiftPrefs: Record<string, Record<string, string>> = {};
+        for (const [pid, m] of Object.entries(postShiftPrefs)) {
+          if (twentyFourIds.has(pid) && Object.keys(m).length > 0) {
+            filteredPostShiftPrefs[pid] = m;
+          }
         }
 
         const parseCap = (s: string): number | null => {
@@ -610,6 +690,8 @@ export function PreferencesForm({
             pref24hDay: null,
             pref24hNight: null,
             postPreferences: filteredPostPrefs,
+            postShiftPrefs: filteredPostShiftPrefs,
+            dowShiftAvoid: has24h ? dowShiftAvoid : {},
             unavailableDays: Array.from(unavailable).sort((a, b) => a - b),
             weekdayPref: weekdayPref === "null" ? null : weekdayPref,
             weekendPref: weekendPref === "null" ? null : weekendPref,
@@ -967,8 +1049,8 @@ export function PreferencesForm({
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Предпочтения по сменам</CardTitle>
             <CardDescription>
-              Какие смены по длительности вы предпочитаете — сутки (24ч) или
-              обычные 12-часовые дневные.
+              Какие смены вы предпочитаете в целом — полные сутки (24ч),
+              12-часовые дневные или ночные.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -1012,7 +1094,18 @@ export function PreferencesForm({
                   суточных постах (избегая полных суток и ночных).
                 </>
               )}
+              {shiftTimeMode === "prefer_night" && (
+                <>
+                  Солвер будет стараться отдавать вам{" "}
+                  <strong>ночные смены</strong> на суточных постах (избегая
+                  полных суток и дневных).
+                </>
+              )}
             </div>
+            <p className="mt-2 text-[11px] text-muted-foreground">
+              Это общий ориентир. Точнее — по каждому суточному посту отдельно
+              (с/д/н) можно указать ниже, в «Предпочтениях по аппаратам».
+            </p>
           </CardContent>
         </Card>
       )}
@@ -1025,10 +1118,12 @@ export function PreferencesForm({
             </CardTitle>
             <CardDescription>
               «Просьба не ставить» — солвер не поставит вас на этот аппарат,
-              кроме крайнего случая (и админ может переопределить вручную).
+              кроме крайнего случая (и админ может переопределить вручную). На
+              суточных постах можно указать отдельно по сменам (сутки / день /
+              ночь).
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-1">
+          <CardContent className="space-y-1.5">
             <label className="flex items-center gap-2 text-sm cursor-pointer pb-2">
               <Checkbox
                 checked={avoidSamePost}
@@ -1037,42 +1132,89 @@ export function PreferencesForm({
               />
               Не ставить меня на один и тот же аппарат два дня подряд
             </label>
-            {visiblePosts.map((post) => (
-              <div
-                key={post.id}
-                className="flex items-center gap-3 rounded border px-3 py-1.5 text-sm"
-              >
-                <span className="flex-1">{post.name}</span>
-                <Badge variant="outline" className="text-[10px] shrink-0">
-                  {post.shiftHours}ч
-                </Badge>
-                <Select
-                  value={postPrefs[post.id] ?? "neutral"}
-                  onValueChange={(v) => {
-                    if (!v) return;
-                    setPostPrefs((p) => {
-                      const next = { ...p, [post.id]: v };
-                      if (v === "neutral") delete next[post.id];
-                      return next;
-                    });
-                  }}
-                  disabled={readOnly}
+            {visiblePosts.map((post) =>
+              post.shiftHours === 24 ? (
+                <div
+                  key={post.id}
+                  className="rounded border px-3 py-2 text-sm space-y-2"
                 >
-                  <SelectTrigger className="w-44 h-7 text-xs">
-                    <SelectValue>{prefLabel}</SelectValue>
-                  </SelectTrigger>
-                  <SelectContent>
-                    {POST_PREF5.map((o) => (
-                      <SelectItem key={o.value} value={o.value}>
-                        <span className={PREF_COLOR[o.value] ?? ""}>
-                          {o.label}
-                        </span>
-                      </SelectItem>
+                  <div className="flex items-center gap-2">
+                    <span className="flex-1 font-medium">{post.name}</span>
+                    <Badge variant="outline" className="text-[10px] shrink-0">
+                      суточный
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2">
+                    {SHIFT_KINDS.map(({ key, label }) => (
+                      <div key={key} className="space-y-1">
+                        <div className="text-[11px] text-muted-foreground">
+                          {label}
+                        </div>
+                        <Select
+                          value={postShiftPrefs[post.id]?.[key] ?? "neutral"}
+                          onValueChange={(v) =>
+                            v && setPostShiftPref(post.id, key, v)
+                          }
+                          disabled={readOnly}
+                        >
+                          <SelectTrigger className="w-full h-7 text-xs">
+                            <SelectValue>{shiftKindLabel}</SelectValue>
+                          </SelectTrigger>
+                          <SelectContent>
+                            {SHIFT_KIND3.map((o) => (
+                              <SelectItem
+                                key={o.value}
+                                value={o.value}
+                                className="text-xs"
+                              >
+                                <span className={PREF_COLOR[o.value] ?? ""}>
+                                  {o.label}
+                                </span>
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
                     ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            ))}
+                  </div>
+                </div>
+              ) : (
+                <div
+                  key={post.id}
+                  className="flex items-center gap-3 rounded border px-3 py-1.5 text-sm"
+                >
+                  <span className="flex-1">{post.name}</span>
+                  <Badge variant="outline" className="text-[10px] shrink-0">
+                    {post.shiftHours}ч
+                  </Badge>
+                  <Select
+                    value={postPrefs[post.id] ?? "neutral"}
+                    onValueChange={(v) => {
+                      if (!v) return;
+                      setPostPrefs((p) => {
+                        const next = { ...p, [post.id]: v };
+                        if (v === "neutral") delete next[post.id];
+                        return next;
+                      });
+                    }}
+                    disabled={readOnly}
+                  >
+                    <SelectTrigger className="w-44 h-7 text-xs">
+                      <SelectValue>{prefLabel}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {POST_PREF5.map((o) => (
+                        <SelectItem key={o.value} value={o.value}>
+                          <span className={PREF_COLOR[o.value] ?? ""}>
+                            {o.label}
+                          </span>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              ),
+            )}
           </CardContent>
         </Card>
       )}
@@ -1257,6 +1399,53 @@ export function PreferencesForm({
           </div>
         </CardContent>
       </Card>
+
+      {has24h && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">
+              Сутки / ночи по дням недели
+            </CardTitle>
+            <CardDescription>
+              Если в какой-то день недели вам неудобны суточные или ночные
+              смены — отметьте. Дневные в этот день остаются доступными.
+              Напр. «в пятницу не сутки».
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="space-y-1.5">
+              {DAY_NAMES.map((name, i) => {
+                const key = String(i + 1);
+                const flags = dowShiftAvoid[key] ?? {};
+                return (
+                  <div
+                    key={key}
+                    className="flex items-center gap-3 rounded border px-3 py-1.5 text-sm"
+                  >
+                    <span className="flex-1 font-medium">{name}</span>
+                    <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                      <Checkbox
+                        checked={!!flags.full}
+                        disabled={readOnly}
+                        onCheckedChange={() => toggleDowShiftAvoid(key, "full")}
+                      />
+                      Не сутки
+                    </label>
+                    <label className="flex items-center gap-1.5 text-xs cursor-pointer">
+                      <Checkbox
+                        checked={!!flags.night}
+                        disabled={readOnly}
+                        onCheckedChange={() => toggleDowShiftAvoid(key, "night")}
+                      />
+                      Не ночь
+                    </label>
+                  </div>
+                );
+              })}
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader className="pb-2">

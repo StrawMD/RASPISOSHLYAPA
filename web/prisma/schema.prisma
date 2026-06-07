@@ -112,9 +112,15 @@ model Preference {
   pref24hFull     String?
   pref24hDay      String?
   pref24hNight    String?
-  shiftTimeMode   String?  // only_full | prefer_full | neutral | prefer_day
+  shiftTimeMode   String?  // only_full | prefer_full | neutral | prefer_day | prefer_night
   postPriority    String   @default("[]")
   postPreferences String   @default("{}")
+  /** JSON: предпочтения по типам смен на суточных постах:
+      { "<postId>": { "full": "prefer|avoid", "day": "...", "night": "..." } } */
+  postShiftPrefs  String   @default("{}")
+  /** JSON: по дням недели не ставить определённые типы смен (1=Пн..7=Вс):
+      { "5": { "full": true, "night": true } } — напр. «в пятницу не сутки». */
+  dowShiftAvoid   String   @default("{}")
   unavailableDays String   @default("[]")
   needsApproval   Boolean  @default(false)
   weekdayPref     String?

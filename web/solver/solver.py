@@ -67,6 +67,8 @@ DEFAULT_WEIGHTS: dict[str, int] = {
     "prefer_with": 40,           # награда за совместную смену с желаемым коллегой
     "same_post_repeat": 40,      # штраф за один и тот же аппарат два дня подряд
     "min_shifts_short": 600,     # штраф за каждую смену ниже желаемого минимума
+    "dow_shift_avoid": 3000,     # сильный мягкий запрет типа смены в день недели
+    "prefer_night_bias": 600,    # сила режима «предпочитаю ночные»
     "understaff": 100000,        # релаксация: штраф за каждый незакрытый слот
 }
 
@@ -79,6 +81,8 @@ class ScheduleSolver:
         employees: list[Employee],
         config: MonthConfig,
         post_preferences: dict[str, dict[str, str]] | None = None,
+        post_shift_prefs: dict[str, dict[str, dict[str, str]]] | None = None,
+        dow_shift_avoid: dict[str, dict[str, dict[str, bool]]] | None = None,
         shift_preferences: dict[str, dict] | None = None,
         shift_time_modes: dict[str, str] | None = None,
         seniority_filter: bool = False,
@@ -97,6 +101,8 @@ class ScheduleSolver:
         self.employees = employees
         self.config = config
         self.post_prefs = post_preferences or {}
+        self.post_shift_prefs = post_shift_prefs or {}
+        self.dow_shift_avoid = dow_shift_avoid or {}
         self.shift_prefs = shift_preferences or {}
         self.shift_time_modes = shift_time_modes or {}
         self.seniority_filter = seniority_filter
@@ -129,6 +135,7 @@ class ScheduleSolver:
         self._24h_pidxs = frozenset(
             i for i, p in enumerate(self.posts) if p.shift_hours == 24
         )
+        self._post_idx = {p.id: i for i, p in enumerate(self.posts)}
         self._penalties: list = []
         self.diagnostics: list[str] = []
         self._worked: dict[tuple[int, int], cp_model.IntVar | None] = {}
@@ -240,6 +247,8 @@ class ScheduleSolver:
         self._prefer_2day_rest()
         self._prefer_full_shifts()
         self._post_preference_penalty()
+        self._post_shift_pref_penalty()
+        self._dow_shift_avoid_penalty()
         self._shift_type_penalty()
         self._shift_time_mode_penalty()
         self._weekend_fairness()
@@ -763,6 +772,86 @@ class ScheduleSolver:
                         if (e, d, p) in self.x:
                             self._penalties.append(w * self.x[e, d, p])
 
+    def _post_shift_pref_penalty(self):
+        """Предпочтения по ТИПУ смены на конкретном суточном посту.
+
+        Источник — `post_shift_prefs[name] = {postId: {full|day|night: lvl}}`,
+        где lvl ∈ {prefer, avoid}. Применяется только к суточным постам
+        (24ч), к переменным xf (сутки) / xd (день) / xn (ночь). Это даёт
+        раздельные пожелания вида «ССК1: день — хочу, ночь — не ставить».
+        Мягкие веса (post_prefer / post_avoid), со скейлом по стажу.
+        """
+        for e, emp in enumerate(self.employees):
+            prefs = self.post_shift_prefs.get(emp.name, {})
+            if not prefs:
+                continue
+            senior_bonus = emp.seniority_score // 2
+
+            def lvl_weight(level):
+                if level == "prefer":
+                    return -(self.W["post_prefer"] + senior_bonus)
+                if level == "avoid":
+                    return self.W["post_avoid"] + senior_bonus
+                return 0
+
+            for post_id, by_kind in prefs.items():
+                if not isinstance(by_kind, dict):
+                    continue
+                p = self._post_idx.get(post_id)
+                if p is None or p not in self._24h_pidxs:
+                    continue
+                kinds = (
+                    ("full", self.xf),
+                    ("day", self.xd),
+                    ("night", self.xn),
+                )
+                for d in self.config.days:
+                    for kind, varmap in kinds:
+                        w = lvl_weight(by_kind.get(kind))
+                        if w == 0:
+                            continue
+                        var = varmap.get((e, d, p))
+                        if var is not None:
+                            self._penalties.append(w * var)
+
+    def _dow_shift_avoid_penalty(self):
+        """«Не ставить определённый тип смены в этот день недели».
+
+        Источник — `dow_shift_avoid[name] = {dow: {full|night|day: true}}`,
+        где dow — строка 1..7 (1=Пн..7=Вс). Сильный мягкий штраф (близкий
+        к запрету, но не делает задачу infeasible): напр. «в пятницу не
+        ставить сутки/ночь, а день можно».
+        """
+        W = self.W["dow_shift_avoid"]
+        if not W:
+            return
+        for e, emp in enumerate(self.employees):
+            by_dow = self.dow_shift_avoid.get(emp.name, {})
+            if not by_dow:
+                continue
+            for d in self.config.days:
+                dow_str = str(self.config.day_of_week(d) + 1)
+                flags = by_dow.get(dow_str)
+                if not flags:
+                    continue
+                avoid_full = bool(flags.get("full"))
+                avoid_night = bool(flags.get("night"))
+                avoid_day = bool(flags.get("day"))
+                for p in self._24h_pidxs:
+                    if avoid_full and (e, d, p) in self.xf:
+                        self._penalties.append(W * self.xf[e, d, p])
+                    if avoid_night and (e, d, p) in self.xn:
+                        self._penalties.append(W * self.xn[e, d, p])
+                    if avoid_day and (e, d, p) in self.xd:
+                        self._penalties.append(W * self.xd[e, d, p])
+                if avoid_day:
+                    # обычные 12ч посты — это дневные смены
+                    for p in range(len(self.posts)):
+                        if p in self._24h_pidxs:
+                            continue
+                        if (e, d, p) in self.x:
+                            self._penalties.append(W * self.x[e, d, p])
+
     def _shift_type_penalty(self):
         """Legacy per-24h-post 'prefer' flags (kept for backward compat).
 
@@ -797,12 +886,15 @@ class ScheduleSolver:
           neutral     - no bias
           prefer_day  - reward 12h day shifts (x regular, xd on 24h posts),
                         penalise 24h monolith (xf) and nights (xn)
+          prefer_night - reward nights (xn on 24h posts), penalise 24h
+                        monolith (xf), day-on-24h (xd) и обычные 12ч днёвки (x)
 
         BIAS is tuned to dominate the global monolith reward (500) so that
         personal shift-time preferences are respected even when the solver
         would otherwise prefer a 24h monolith for coverage reasons.
         """
         BIAS = self.W["shift_time_bias"]
+        NIGHT_BIAS = self.W["prefer_night_bias"]
         for e, emp in enumerate(self.employees):
             mode = self.shift_time_modes.get(emp.name, "neutral")
             if mode in ("neutral", "only_full", ""):
@@ -829,6 +921,13 @@ class ScheduleSolver:
                                 self._penalties.append(-BIAS * xd)
                             if xn is not None:
                                 self._penalties.append(BIAS * xn)
+                        elif mode == "prefer_night":
+                            if xf is not None:
+                                self._penalties.append(NIGHT_BIAS * xf)
+                            if xd is not None:
+                                self._penalties.append(NIGHT_BIAS * xd)
+                            if xn is not None:
+                                self._penalties.append(-NIGHT_BIAS * xn)
                     else:
                         x = self.x.get((e, d, p))
                         if x is None:
@@ -837,6 +936,9 @@ class ScheduleSolver:
                             self._penalties.append(BIAS * x)
                         elif mode == "prefer_day":
                             self._penalties.append(-BIAS * x)
+                        elif mode == "prefer_night":
+                            # обычные 12ч — это днёвки, ночнику они нежелательны
+                            self._penalties.append(NIGHT_BIAS * x)
 
     def _weekend_fairness(self):
         if not self.W["weekend_fairness"]:

@@ -45,6 +45,10 @@ export interface SolverInput {
     fixedSlots?: Record<string, Record<string, string[]>>;
   };
   postPreferences?: Record<string, Record<string, string>>;
+  /** name → postId → { full|day|night: "prefer"|"avoid" } (только суточные посты) */
+  postShiftPrefs?: Record<string, Record<string, Record<string, string>>>;
+  /** name → dow("1".."7") → { full?|night?|day?: true } — не ставить тип смены в этот день недели */
+  dowShiftAvoid?: Record<string, Record<string, Record<string, boolean>>>;
   shiftPreferences?: Record<string, Record<string, boolean | null>>;
   shiftTimeModes?: Record<string, string>;
   seniorityFilter?: boolean;

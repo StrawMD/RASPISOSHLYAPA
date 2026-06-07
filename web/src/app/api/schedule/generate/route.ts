@@ -159,6 +159,8 @@ export async function POST(req: NextRequest) {
   }
 
   const postPreferences: Record<string, Record<string, string>> = {};
+  const postShiftPrefs: Record<string, Record<string, Record<string, string>>> = {};
+  const dowShiftAvoid: Record<string, Record<string, Record<string, boolean>>> = {};
   const shiftPreferences: Record<string, Record<string, boolean | null>> = {};
   const shiftTimeModes: Record<string, string> = {};
   const weekdayPrefs: Record<string, string> = {};
@@ -193,6 +195,7 @@ export async function POST(req: NextRequest) {
     "prefer_full",
     "neutral",
     "prefer_day",
+    "prefer_night",
   ]);
 
   for (const pref of preferences) {
@@ -230,6 +233,22 @@ export async function POST(req: NextRequest) {
           );
     if (mode && mode !== "neutral") {
       shiftTimeModes[emp.name] = mode;
+    }
+
+    const pspRaw = safeJson<Record<string, Record<string, string>>>(
+      pref.postShiftPrefs,
+      {},
+    );
+    if (pspRaw && Object.keys(pspRaw).length > 0) {
+      postShiftPrefs[emp.name] = pspRaw;
+    }
+
+    const dsaRaw = safeJson<Record<string, Record<string, boolean>>>(
+      pref.dowShiftAvoid,
+      {},
+    );
+    if (dsaRaw && Object.keys(dsaRaw).length > 0) {
+      dowShiftAvoid[emp.name] = dsaRaw;
     }
 
     if (pref.weekdayPref) weekdayPrefs[emp.name] = pref.weekdayPref;
@@ -395,6 +414,8 @@ export async function POST(req: NextRequest) {
       fixedSlots: fixedSlotsForSolver,
     },
     postPreferences,
+    postShiftPrefs,
+    dowShiftAvoid,
     shiftPreferences,
     shiftTimeModes,
     seniorityFilter: seniorityFilter ?? false,

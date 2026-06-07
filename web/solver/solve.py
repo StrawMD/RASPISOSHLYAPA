@@ -72,6 +72,8 @@ def main():
     )
 
     post_prefs = input_data.get("postPreferences", {})
+    post_shift_prefs = input_data.get("postShiftPrefs", {})
+    dow_shift_avoid = input_data.get("dowShiftAvoid", {})
     shift_prefs = input_data.get("shiftPreferences", {})
     shift_time_modes = input_data.get("shiftTimeModes", {})
     seniority_filter = input_data.get("seniorityFilter", False)
@@ -110,6 +112,8 @@ def main():
         return ScheduleSolver(
             posts, employees, config,
             post_preferences=post_prefs,
+            post_shift_prefs=post_shift_prefs,
+            dow_shift_avoid=dow_shift_avoid,
             shift_preferences=shift_prefs,
             shift_time_modes=shift_time_modes,
             seniority_filter=seniority_filter,

@@ -32,6 +32,7 @@ export async function POST(req: NextRequest) {
     dayOfWeekPrefs, desiredDates, comment,
     softUnavailableDays, loadPref, maxNights, maxFull, minShifts,
     avoidWith, preferWith, avoidSamePost,
+    postShiftPrefs, dowShiftAvoid,
   } = body;
 
   const normAvoidSamePost = Boolean(avoidSamePost);
@@ -41,7 +42,44 @@ export async function POST(req: NextRequest) {
     "prefer_full",
     "neutral",
     "prefer_day",
+    "prefer_night",
   ]);
+
+  // {postId: {full|day|night: "prefer"|"avoid"}} — пожелания по типу смены на
+  // суточных постах. Нейтральные/мусорные значения отбрасываем.
+  function normPostShiftPrefs(v: unknown): Record<string, Record<string, string>> {
+    const out: Record<string, Record<string, string>> = {};
+    if (!v || typeof v !== "object") return out;
+    for (const [postId, raw] of Object.entries(v as Record<string, unknown>)) {
+      if (typeof postId !== "string" || !raw || typeof raw !== "object") continue;
+      const inner: Record<string, string> = {};
+      for (const kind of ["full", "day", "night"] as const) {
+        const lvl = (raw as Record<string, unknown>)[kind];
+        if (lvl === "prefer" || lvl === "avoid") inner[kind] = lvl;
+      }
+      if (Object.keys(inner).length > 0) out[postId] = inner;
+    }
+    return out;
+  }
+
+  // {dow("1".."7"): {full?|night?|day?: true}} — не ставить тип смены в этот
+  // день недели. Только флаги === true, только валидные дни недели.
+  function normDowShiftAvoid(v: unknown): Record<string, Record<string, boolean>> {
+    const out: Record<string, Record<string, boolean>> = {};
+    if (!v || typeof v !== "object") return out;
+    for (const [dow, raw] of Object.entries(v as Record<string, unknown>)) {
+      if (!/^[1-7]$/.test(dow) || !raw || typeof raw !== "object") continue;
+      const inner: Record<string, boolean> = {};
+      for (const kind of ["full", "night", "day"] as const) {
+        if ((raw as Record<string, unknown>)[kind] === true) inner[kind] = true;
+      }
+      if (Object.keys(inner).length > 0) out[dow] = inner;
+    }
+    return out;
+  }
+
+  const normPostShift = normPostShiftPrefs(postShiftPrefs);
+  const normDowAvoid = normDowShiftAvoid(dowShiftAvoid);
   const normalizedShiftTimeMode =
     typeof shiftTimeMode === "string" && ALLOWED_MODES.has(shiftTimeMode)
       ? shiftTimeMode
@@ -147,6 +185,8 @@ export async function POST(req: NextRequest) {
       pref24hNight: pref24hNight ?? null,
       shiftTimeMode: normalizedShiftTimeMode,
       postPreferences: JSON.stringify(postPreferences ?? {}),
+      postShiftPrefs: JSON.stringify(normPostShift),
+      dowShiftAvoid: JSON.stringify(normDowAvoid),
       unavailableDays: JSON.stringify(unavail),
       needsApproval,
       weekdayPref: weekdayPref ?? null,
@@ -172,6 +212,8 @@ export async function POST(req: NextRequest) {
       pref24hNight: pref24hNight ?? null,
       shiftTimeMode: normalizedShiftTimeMode,
       postPreferences: JSON.stringify(postPreferences ?? {}),
+      postShiftPrefs: JSON.stringify(normPostShift),
+      dowShiftAvoid: JSON.stringify(normDowAvoid),
       unavailableDays: JSON.stringify(unavail),
       needsApproval,
       weekdayPref: weekdayPref ?? null,
