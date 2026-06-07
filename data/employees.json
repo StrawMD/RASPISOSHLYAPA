@@ -487,7 +487,7 @@
   },
   {
     "name": "Корнилов",
-    "rate": 1.0,
+    "rate": 0.5,
     "max_rate": 1.5,
     "seniority": 0,
     "prefers_overtime": null,
@@ -514,36 +514,6 @@
     ],
     "post_preferences": [
       "ssk1",
-      "kt_pb"
-    ]
-  },
-  {
-    "name": "Ким",
-    "rate": 0.5,
-    "max_rate": 1.5,
-    "seniority": 0,
-    "prefers_overtime": null,
-    "avoid_weekends": false,
-    "allowed_posts": [
-      "ssk1",
-      "kt_pb"
-    ],
-    "post_preferences": [
-      "ssk1",
-      "kt_pb"
-    ]
-  },
-  {
-    "name": "Серебрякова",
-    "rate": 0.5,
-    "max_rate": 1.5,
-    "seniority": 0,
-    "prefers_overtime": null,
-    "avoid_weekends": false,
-    "allowed_posts": [
-      "kt_pb"
-    ],
-    "post_preferences": [
       "kt_pb"
     ]
   },
@@ -767,6 +737,52 @@
       "mrt_ssk",
       "mrt_22_1",
       "mrt_21_1"
+    ]
+  },
+  {
+    "name": "Кан",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 0,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_ssk2",
+      "kt_2011",
+      "kt_2013",
+      "kt_4str"
+    ],
+    "post_preferences": [
+      "kt_ssk2",
+      "kt_2011",
+      "kt_2013",
+      "kt_4str"
+    ]
+  },
+  {
+    "name": "Титов",
+    "rate": 1.0,
+    "max_rate": 1.5,
+    "seniority": 7,
+    "hospital_start_year": 2019,
+    "career_start_year": 2019,
+    "prefers_overtime": null,
+    "avoid_weekends": false,
+    "allowed_posts": [
+      "kt_pb",
+      "ssk1",
+      "kt_ssk2",
+      "kt_2011",
+      "kt_2013",
+      "kt_4str"
+    ],
+    "post_preferences": [
+      "kt_pb",
+      "ssk1",
+      "kt_ssk2",
+      "kt_2011",
+      "kt_2013",
+      "kt_4str"
     ]
   }
 ]

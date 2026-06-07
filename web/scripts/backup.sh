@@ -1,10 +1,14 @@
 #!/bin/bash
 # Daily SQLite backup to S3-compatible storage (Timeweb)
-# Runs via cron at 3:00 AM
+#
+# NOTE: production cron actually runs /opt/raspisoshlyapa/backup-to-s3.sh
+# (sqlite3 .backup inside the container -> gzip -> rclone to tws3:, retention 30d).
+# This script is a standalone aws-cli variant kept for reference.
+# DB path matches docker-compose (DATABASE_URL=file:/app/data/data.db).
 
 set -e
 
-DB_PATH="/app/prisma/data.db"
+DB_PATH="/app/data/data.db"
 BACKUP_DIR="/tmp/backups"
 DATE=$(date +%Y-%m-%d_%H%M)
 BACKUP_FILE="data_${DATE}.db"
