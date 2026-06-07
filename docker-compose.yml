@@ -1,9 +1,13 @@
 services:
   web:
+    # Образ собирается в CI (GitHub Actions) и публикуется в GHCR.
+    # `docker compose pull` тянет готовый образ — на сервере НЕ собираем.
+    # Для отката можно указать конкретный тег: WEB_IMAGE=ghcr.io/strawmd/raspisoshlyapa:<sha>
+    # `build:` оставлен как локальный фолбэк (`docker compose up --build`).
+    image: "${WEB_IMAGE:-ghcr.io/strawmd/raspisoshlyapa:latest}"
     build:
       context: ./web
       dockerfile: Dockerfile
-    image: raspisoshlyapa-web
     restart: unless-stopped
     ports:
       - "80:3000"
