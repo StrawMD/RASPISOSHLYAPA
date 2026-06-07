@@ -15,8 +15,11 @@ import {
 } from "@/components/ui/card";
 import { Eye, EyeOff } from "lucide-react";
 
+type Mode = "worker" | "admin";
+
 export default function LoginPage() {
   const router = useRouter();
+  const [mode, setMode] = useState<Mode>("worker");
   const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -30,19 +33,30 @@ export default function LoginPage() {
 
     const result = await signIn("credentials", {
       login,
-      password,
+      password: mode === "admin" ? password : "",
+      mode,
       redirect: false,
     });
 
     setLoading(false);
 
     if (result?.error) {
-      setError("Неверный логин или пароль");
+      setError(
+        mode === "admin"
+          ? "Неверная фамилия или пароль администратора"
+          : "Фамилия не найдена. Проверьте написание."
+      );
       return;
     }
 
     router.push("/");
     router.refresh();
+  }
+
+  function switchMode(next: Mode) {
+    setMode(next);
+    setError("");
+    setPassword("");
   }
 
   return (
@@ -53,9 +67,34 @@ export default function LoginPage() {
           <CardDescription>Лучевая диагностика</CardDescription>
         </CardHeader>
         <CardContent>
+          <div className="mb-4 grid grid-cols-2 gap-1 rounded-lg bg-muted p-1">
+            <button
+              type="button"
+              onClick={() => switchMode("worker")}
+              className={`rounded-md py-1.5 text-sm font-medium transition-colors ${
+                mode === "worker"
+                  ? "bg-background shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Работник
+            </button>
+            <button
+              type="button"
+              onClick={() => switchMode("admin")}
+              className={`rounded-md py-1.5 text-sm font-medium transition-colors ${
+                mode === "admin"
+                  ? "bg-background shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              Админ
+            </button>
+          </div>
+
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="login">Логин (фамилия)</Label>
+              <Label htmlFor="login">Фамилия</Label>
               <Input
                 id="login"
                 value={login}
@@ -65,38 +104,49 @@ export default function LoginPage() {
                 required
                 autoFocus
               />
+              {mode === "worker" && (
+                <p className="text-[11px] text-muted-foreground">
+                  Введите свою фамилию — пароль не нужен.
+                </p>
+              )}
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="password">Пароль</Label>
-              <div className="relative">
-                <Input
-                  id="password"
-                  type={showPassword ? "text" : "password"}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  autoComplete="current-password"
-                  lang="ru"
-                  required
-                  className="pr-10"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground rounded"
-                  tabIndex={-1}
-                  aria-label={showPassword ? "Скрыть пароль" : "Показать пароль"}
-                >
-                  {showPassword ? (
-                    <EyeOff className="h-4 w-4" />
-                  ) : (
-                    <Eye className="h-4 w-4" />
-                  )}
-                </button>
+
+            {mode === "admin" && (
+              <div className="space-y-2">
+                <Label htmlFor="password">Пароль администратора</Label>
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPassword ? "text" : "password"}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="current-password"
+                    lang="ru"
+                    required
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-muted-foreground hover:text-foreground rounded"
+                    tabIndex={-1}
+                    aria-label={
+                      showPassword ? "Скрыть пароль" : "Показать пароль"
+                    }
+                  >
+                    {showPassword ? (
+                      <EyeOff className="h-4 w-4" />
+                    ) : (
+                      <Eye className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  Если не переключается раскладка — нажмите «показать пароль».
+                </p>
               </div>
-              <p className="text-[11px] text-muted-foreground">
-                Если не переключается раскладка — нажмите «показать пароль».
-              </p>
-            </div>
+            )}
+
             {error && (
               <p className="text-sm text-destructive text-center">{error}</p>
             )}

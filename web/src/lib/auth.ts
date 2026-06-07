@@ -12,9 +12,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
       credentials: {
         login: { label: "Логин", type: "text" },
         password: { label: "Пароль", type: "password" },
+        mode: { label: "Режим", type: "text" },
       },
       async authorize(credentials) {
-        if (!credentials?.login || !credentials?.password) return null;
+        if (!credentials?.login) return null;
 
         const normalizedLogin = (credentials.login as string)
           .trim()
@@ -28,11 +29,23 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
 
         if (!user) return null;
 
-        const valid = await compare(
-          credentials.password as string,
-          user.passwordHash
-        );
-        if (!valid) return null;
+        const isAdminUser = ["admin", "schedule_manager"].includes(user.role);
+        const mode = credentials.mode === "admin" ? "admin" : "worker";
+
+        if (mode === "admin") {
+          // Админ-режим: только админ-аккаунты и только с паролем.
+          if (!isAdminUser) return null;
+          if (!credentials.password) return null;
+          const valid = await compare(
+            credentials.password as string,
+            user.passwordHash
+          );
+          if (!valid) return null;
+        } else {
+          // Режим работника: вход по фамилии без пароля.
+          // Админ-аккаунты так пускать нельзя — для них только админ-режим.
+          if (isAdminUser) return null;
+        }
 
         return {
           id: user.id,

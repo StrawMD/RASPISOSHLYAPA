@@ -4,9 +4,8 @@
  * Rules:
  *  - login = employee surname lowercased (Russian, first word)
  *  - default password = "Боткин1!"
- *  - Соломка          -> role=admin, password=admin123
- *  - Знатнова         -> role=admin, password=Боткин1!
- *  - everyone else    -> role=employee, password=Боткин1!
+ *  - Соломка / Знатнова -> role=admin, password=Боткин1! (вход в админ-режиме)
+ *  - everyone else      -> role=employee (вход по фамилии без пароля)
  *
  * Login lookup is case-insensitive (auth.ts lowercases input); we persist the
  * canonical lowercase form here.
@@ -28,7 +27,7 @@ import { hash } from "bcryptjs";
 const prisma = new PrismaClient();
 
 const DEFAULT_PASSWORD = process.env.EMPLOYEE_PASSWORD || "Боткин1!";
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "Боткин1!";
 const ADMIN_SURNAMES = new Set(["Соломка", "Знатнова"]);
 const PRIMARY_ADMIN_SURNAME = "Соломка";
 

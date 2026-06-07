@@ -231,7 +231,7 @@ export function ScheduleView({
   userRole,
 }: Props) {
   void employeeHours;
-  void userRole;
+  const isWorker = !["admin", "schedule_manager"].includes(userRole);
   const router = useRouter();
   const [viewMode, setViewMode] = useState<"calendar" | "list" | "table">(
     "calendar"
@@ -344,9 +344,16 @@ export function ScheduleView({
     </Select>
   );
 
+  const experimentalBanner = isWorker ? (
+    <div className="mb-4 rounded-md border border-amber-300 bg-amber-50 dark:bg-amber-950/30 px-3 py-2 text-center text-sm font-medium text-amber-800 dark:text-amber-200 print-hide-controls">
+      Это экспериментальное расписание, ненастоящее
+    </div>
+  ) : null;
+
   if (!schedule) {
     return (
       <div className="container mx-auto p-4 md:p-6">
+        {experimentalBanner}
         <div className="flex items-center justify-between mb-4 gap-2 flex-wrap">
           <h1 className="text-xl font-semibold">
             {MONTH_NAMES[month - 1]} {year}
@@ -365,6 +372,7 @@ export function ScheduleView({
   return (
     <div className="container mx-auto p-4 md:p-6" ref={printRef}>
       <PrintStyles />
+      {experimentalBanner}
       <div className="flex items-center justify-between mb-4 gap-2 flex-wrap print-hide-controls">
         <div className="flex items-center gap-2 flex-wrap">
           <h1 className="text-xl font-semibold">
