@@ -9,7 +9,7 @@
   },
   {
     "id": "kt_pb",
-    "name": "КТ пищеблок",
+    "name": "КТ РСЦ",
     "shift_hours": 24,
     "staff_required": 1,
     "weekday_active": true,
@@ -33,7 +33,7 @@
   },
   {
     "id": "ge_siemens",
-    "name": "GE / Siemens (ЦАОП)",
+    "name": "КТ Siemens + 8 корпус",
     "shift_hours": 12,
     "staff_required": 1,
     "weekday_active": true,
@@ -41,7 +41,7 @@
   },
   {
     "id": "kt_2011",
-    "name": "КТ 2011",
+    "name": "КТ 2011 ЦАОП",
     "shift_hours": 12,
     "staff_required": 2,
     "weekday_active": true,
@@ -49,7 +49,7 @@
   },
   {
     "id": "kt_2013",
-    "name": "КТ 2013",
+    "name": "КТ 2013 (бывш. 21 корп)",
     "shift_hours": 12,
     "staff_required": 1,
     "weekday_active": true,
@@ -65,7 +65,7 @@
   },
   {
     "id": "kt_4str",
-    "name": "КТ 4стр",
+    "name": "КТ 4стр ЦАОП",
     "shift_hours": 12,
     "staff_required": 2,
     "weekday_active": true,
