@@ -16,11 +16,39 @@
  * у нового берётся разумный дефолт. "posts" задаёт allowedPosts И из них выводит modalities/can24h.
  */
 const { PrismaClient } = require("@prisma/client");
+const { hash } = require("bcryptjs");
 const prisma = new PrismaClient();
+
+const ADMIN_SURNAMES = new Set(["Соломка", "Знатнова"]);
+const PRIMARY_ADMIN_SURNAME = "Соломка";
+const surnameFromName = (n) => n.trim().split(/\s+/)[0] ?? n;
 
 function fail(msg) {
   console.error("ОШИБКА: " + msg);
   process.exit(1);
+}
+
+/**
+ * Учётка для входа: вход работника идёт по таблице User (login = фамилия в нижнем
+ * регистре). Без неё фамилию «не найдёт». Создаём по тем же правилам, что и приложение.
+ */
+async function ensureUser(employeeId, name) {
+  const existing = await prisma.user.findFirst({ where: { employeeId } });
+  if (existing) return;
+  const surname = surnameFromName(name);
+  const login = surname.toLowerCase();
+  const isAdmin = ADMIN_SURNAMES.has(surname);
+  const password = surname === PRIMARY_ADMIN_SURNAME ? "admin123" : "Боткин1!";
+  const role = isAdmin ? "admin" : "employee";
+  const collision = await prisma.user.findUnique({ where: { login } });
+  if (collision) {
+    console.log(`  (учётка login=${login} уже занята — пропускаю)`);
+    return;
+  }
+  await prisma.user.create({
+    data: { login, passwordHash: await hash(password, 12), plaintextPassword: password, role, employeeId },
+  });
+  console.log(`  + учётка login=${login} role=${role}`);
 }
 
 async function deriveFromPosts(posts) {
@@ -101,6 +129,7 @@ async function main() {
       // targetRate не должен выходить за [rate, maxRate]
       const tr = Math.min(Math.max(updated.targetRate ?? updated.rate, updated.rate), updated.maxRate);
       if (tr !== updated.targetRate) await prisma.employee.update({ where: { id: existing.id }, data: { targetRate: tr } });
+      await ensureUser(existing.id, updated.name);
       console.log(`Обновлён: ${req.name}`);
     } else {
       const rate = data.rate ?? 1.0;
@@ -118,6 +147,7 @@ async function main() {
           can24h: data.can24h ?? false,
         },
       });
+      await ensureUser(created.id, created.name);
       console.log(`Создан: ${created.name}`);
     }
     return;
