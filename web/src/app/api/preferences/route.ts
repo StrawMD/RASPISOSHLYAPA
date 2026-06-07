@@ -88,9 +88,24 @@ export async function POST(req: NextRequest) {
   });
 
   if (!monthRecord) {
-    monthRecord = await prisma.month.create({
-      data: { year, month, normHours: 0, status: "collecting" },
-    });
+    // Гонка при одновременном первом сохранении нескольких сотрудников:
+    // месяца ещё нет, и параллельные create по unique [year,month] упали бы
+    // с конфликтом. Ловим и перечитываем — победитель уже создал запись.
+    try {
+      monthRecord = await prisma.month.create({
+        data: { year, month, normHours: 0, status: "collecting" },
+      });
+    } catch {
+      monthRecord = await prisma.month.findUnique({
+        where: { year_month: { year, month } },
+      });
+    }
+    if (!monthRecord) {
+      return NextResponse.json(
+        { error: "Не удалось открыть месяц для сохранения" },
+        { status: 500 },
+      );
+    }
   }
 
   if (!isAdmin) {
