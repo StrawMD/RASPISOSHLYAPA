@@ -12,6 +12,11 @@ import {
 } from "@/components/ui/popover";
 import { toast } from "sonner";
 import { Loader2, Plus, X, ArrowLeftRight, History, AlertTriangle } from "lucide-react";
+import {
+  analyzeSchedule,
+  type ComplianceEmployee,
+  type CompliancePrefs,
+} from "@/lib/schedule-compliance";
 
 const DAY_NAMES = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
@@ -20,8 +25,14 @@ type Employee = {
   id: string;
   name: string;
   rate: number;
+  targetRate: number;
   maxRate: number;
+  medicalRestriction: string;
   allowedPosts: string[];
+};
+type PrefInfo = CompliancePrefs & {
+  maxFull: number | null;
+  maxNights: number | null;
 };
 type Schedule = Record<string, Record<string, string[]>>;
 type EditLog = {
@@ -80,6 +91,11 @@ function computeHourStat(
   return { hours: currentHours, target, cap, remaining, level };
 }
 
+// Принуждение к жёсткому исключению (вообще не ставить / медотвод /
+// недоступный день / не сутки-ночь по дню недели) — ярко-красный.
+const VIOLATION_CLASS =
+  "bg-red-600 text-white border-red-700 dark:bg-red-600 dark:text-white";
+
 const LEVEL_CLASSES: Record<HourStat["level"], string> = {
   green:
     "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/40",
@@ -122,6 +138,7 @@ export function ScheduleEditPage() {
   const [employeeHours, setEmployeeHours] = useState<Record<string, number>>({});
   const [posts, setPosts] = useState<Post[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
+  const [prefsByName, setPrefsByName] = useState<Record<string, PrefInfo>>({});
   const [recentEdits, setRecentEdits] = useState<EditLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [showLog, setShowLog] = useState(false);
@@ -142,6 +159,7 @@ export function ScheduleEditPage() {
       setEmployeeHours(data.employeeHours);
       setPosts(data.posts);
       setEmployees(data.employees);
+      setPrefsByName(data.prefsByName ?? {});
       setRecentEdits(data.recentEdits);
       setRelaxed(Boolean(data.relaxed));
 
@@ -188,6 +206,47 @@ export function ScheduleEditPage() {
     }
     return map;
   }, [schedule, posts]);
+
+  const compliance = useMemo(() => {
+    if (!version) return null;
+    const complianceEmployees: ComplianceEmployee[] = employees.map((e) => {
+      const pi = prefsByName[e.name];
+      return {
+        name: e.name,
+        rate: e.rate,
+        targetRate: e.targetRate,
+        maxRate: e.maxRate,
+        maxFull: pi?.maxFull ?? null,
+        maxNights: pi?.maxNights ?? null,
+        prefs: pi
+          ? {
+              avoidHardPosts: pi.avoidHardPosts ?? [],
+              postShiftAvoidHard: pi.postShiftAvoidHard ?? {},
+              unavailableDays: pi.unavailableDays ?? [],
+              dowShiftAvoid: pi.dowShiftAvoid ?? {},
+              medicalRestriction:
+                pi.medicalRestriction ?? e.medicalRestriction ?? "none",
+            }
+          : e.medicalRestriction && e.medicalRestriction !== "none"
+            ? {
+                avoidHardPosts: [],
+                postShiftAvoidHard: {},
+                unavailableDays: [],
+                dowShiftAvoid: {},
+                medicalRestriction: e.medicalRestriction,
+              }
+            : null,
+      };
+    });
+    return analyzeSchedule(
+      schedule,
+      posts,
+      complianceEmployees,
+      version.normHours ?? 0,
+      version.year,
+      version.month,
+    );
+  }, [schedule, posts, employees, prefsByName, version]);
 
   async function doEdit(
     day: number,
@@ -236,6 +295,13 @@ export function ScheduleEditPage() {
   const numDays = new Date(version.year, version.month, 0).getDate();
   const normHours = version.normHours ?? 0;
   const employeeByName = new Map(employees.map((e) => [e.name, e]));
+
+  const violationReasonByKey = new Map<string, string>();
+  compliance?.rows.forEach((r) =>
+    r.violations.forEach((v) =>
+      violationReasonByKey.set(`${v.day}:${v.postId}:${v.label}`, v.reason),
+    ),
+  );
 
   function cellHole(day: number, postId: string): number {
     const target = cellTargets[`${day}:${postId}`];
@@ -375,12 +441,20 @@ export function ScheduleEditPage() {
                           {people.map((person: string, idx: number) => {
                             const baseName = person.replace(/\([сдн]\)$/, "");
                             const personStat = getStat(baseName);
+                            const violation = violationReasonByKey.get(
+                              `${d}:${p.id}:${person}`,
+                            );
                             return (
                               <Popover key={idx}>
                                 <PopoverTrigger
-                                  className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs hover:opacity-80 transition-opacity border ${LEVEL_CLASSES[personStat.level]}`}
-                                  title={`Всего: ${Math.round(personStat.hours)}ч · По ставке: ${Math.round(personStat.target)}ч · Потолок: ${Math.round(personStat.cap)}ч`}
+                                  className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs hover:opacity-80 transition-opacity border ${violation ? VIOLATION_CLASS : LEVEL_CLASSES[personStat.level]}`}
+                                  title={
+                                    violation
+                                      ? `⚠ Жёсткое ограничение: ${violation}`
+                                      : `Всего: ${Math.round(personStat.hours)}ч · По ставке: ${Math.round(personStat.target)}ч · Потолок: ${Math.round(personStat.cap)}ч`
+                                  }
                                 >
+                                  {violation && <span className="mr-0.5">⚠</span>}
                                   {person}
                                   <span className="opacity-70 text-[10px]">
                                     · {Math.round(personStat.hours)}ч
@@ -394,6 +468,11 @@ export function ScheduleEditPage() {
                                     <div className="text-xs font-medium mb-1">
                                       {person} — {p.name}, день {d}
                                     </div>
+                                    {violation && (
+                                      <div className="mb-2 rounded bg-red-600/15 border border-red-600/50 px-2 py-1 text-[11px] text-red-700 dark:text-red-300">
+                                        ⚠ Жёсткое ограничение: {violation}
+                                      </div>
+                                    )}
                                     <div className="flex items-center gap-1 mb-2">
                                       <HourBadge stat={personStat} />
                                     </div>
@@ -537,40 +616,133 @@ export function ScheduleEditPage() {
         </Card>
       )}
 
-      <Card>
-        <CardHeader className="py-3 px-4">
-          <CardTitle className="text-base">Часы сотрудников</CardTitle>
-        </CardHeader>
-        <CardContent className="px-4 pb-4">
-          <div className="flex flex-wrap gap-2">
-            {Object.entries(effectiveHours)
-              .sort(([a], [b]) => a.localeCompare(b))
-              .map(([name, hours]) => {
-                const stat = computeHourStat(
-                  employeeByName.get(name),
-                  hours,
-                  normHours
-                );
-                return (
-                  <span
-                    key={name}
-                    className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-0.5 text-xs ${LEVEL_CLASSES[stat.level]}`}
-                    title={`По ставке: ${Math.round(stat.target)}ч · Потолок: ${Math.round(stat.cap)}ч`}
-                  >
-                    <span className="font-medium">{name}</span>
-                    <span>·</span>
-                    <span>{Math.round(stat.hours)}ч</span>
-                    <span className="opacity-70">
-                      ({stat.remaining >= 0
-                        ? `ещё ${Math.round(stat.remaining)}ч`
-                        : `+${Math.round(-stat.remaining)}ч сверх`})
-                    </span>
-                  </span>
-                );
-              })}
-          </div>
-        </CardContent>
-      </Card>
+      {compliance && (
+        <Card>
+          <CardHeader className="py-3 px-4">
+            <CardTitle className="text-base">
+              Сводка по версии
+            </CardTitle>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground pt-1">
+              <span>
+                Часов всего:{" "}
+                <strong className="text-foreground">
+                  {Math.round(compliance.totalHours)}
+                </strong>{" "}
+                из{" "}
+                <strong className="text-foreground">
+                  {Math.round(compliance.totalTargetHours)}
+                </strong>{" "}
+                целевых
+                {compliance.totalPct != null && (
+                  <> ({Math.round(compliance.totalPct)}%)</>
+                )}
+              </span>
+              <span>
+                Принуждений к исключению:{" "}
+                <strong
+                  className={
+                    compliance.violationCount > 0
+                      ? "text-red-600 dark:text-red-400"
+                      : "text-emerald-600 dark:text-emerald-400"
+                  }
+                >
+                  {compliance.violationCount}
+                </strong>
+              </span>
+              <span>Сотрудников: {compliance.rows.length}</span>
+            </div>
+          </CardHeader>
+          <CardContent className="px-4 pb-4 overflow-x-auto">
+            <table className="w-full text-xs border-collapse min-w-[680px]">
+              <thead>
+                <tr className="text-left text-muted-foreground">
+                  <th className="py-1 pr-2 font-medium">Сотрудник</th>
+                  <th className="py-1 px-2 font-medium text-right">Ставка</th>
+                  <th className="py-1 px-2 font-medium text-right">Часы</th>
+                  <th className="py-1 px-2 font-medium text-right">Цель</th>
+                  <th className="py-1 px-2 font-medium text-right">%</th>
+                  <th className="py-1 px-2 font-medium text-right">Смен</th>
+                  <th className="py-1 px-2 font-medium text-right">с/д/н</th>
+                  <th className="py-1 pl-2 font-medium">Нарушения</th>
+                </tr>
+              </thead>
+              <tbody>
+                {compliance.rows.map((r) => {
+                  const pct = r.pct ?? 0;
+                  const pctClass =
+                    r.pct == null
+                      ? "text-muted-foreground"
+                      : pct < 90
+                        ? "text-amber-600 dark:text-amber-400"
+                        : pct > 120
+                          ? "text-red-600 dark:text-red-400"
+                          : "text-emerald-600 dark:text-emerald-400";
+                  const limitNotes: string[] = [];
+                  if (r.fullOverLimit > 0)
+                    limitNotes.push(`сутки +${r.fullOverLimit} сверх лимита`);
+                  if (r.nightOverLimit > 0)
+                    limitNotes.push(`ночи +${r.nightOverLimit} сверх лимита`);
+                  const hasIssue = r.violations.length > 0 || limitNotes.length > 0;
+                  return (
+                    <tr
+                      key={r.name}
+                      className={`border-t ${hasIssue ? "bg-red-500/5" : ""}`}
+                    >
+                      <td className="py-1 pr-2 font-medium">{r.name}</td>
+                      <td className="py-1 px-2 text-right tabular-nums">
+                        {r.targetRate}
+                      </td>
+                      <td className="py-1 px-2 text-right tabular-nums">
+                        {Math.round(r.hours)}
+                      </td>
+                      <td className="py-1 px-2 text-right tabular-nums text-muted-foreground">
+                        {Math.round(r.targetHours)}
+                      </td>
+                      <td
+                        className={`py-1 px-2 text-right tabular-nums font-medium ${pctClass}`}
+                      >
+                        {r.pct == null ? "—" : `${Math.round(pct)}%`}
+                      </td>
+                      <td className="py-1 px-2 text-right tabular-nums">
+                        {r.shifts}
+                      </td>
+                      <td className="py-1 px-2 text-right tabular-nums text-muted-foreground">
+                        {r.fullCount}/{r.dayCount}/{r.nightCount}
+                      </td>
+                      <td className="py-1 pl-2">
+                        {hasIssue ? (
+                          <div className="space-y-0.5">
+                            {r.violations.map((v, i) => (
+                              <div
+                                key={i}
+                                className="text-red-600 dark:text-red-400"
+                              >
+                                ⚠ д{v.day} {v.postName}: {v.reason}
+                              </div>
+                            ))}
+                            {limitNotes.map((n, i) => (
+                              <div
+                                key={`l${i}`}
+                                className="text-amber-600 dark:text-amber-400"
+                              >
+                                {n}
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-emerald-600 dark:text-emerald-400">
+                            ок
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

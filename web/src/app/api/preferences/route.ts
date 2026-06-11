@@ -45,8 +45,14 @@ export async function POST(req: NextRequest) {
     "prefer_night",
   ]);
 
-  // {postId: {full|day|night: "prefer"|"avoid"}} — пожелания по типу смены на
-  // суточных постах. Нейтральные/мусорные значения отбрасываем.
+  // {postId: {full|day|night: уровень}} — пожелания по типу смены на суточных
+  // постах. 5-уровневая шкала, как у обычных аппаратов. «neutral»/мусор — мимо.
+  const POST_SHIFT_LEVELS = new Set([
+    "prefer_strong",
+    "prefer",
+    "avoid",
+    "avoid_hard",
+  ]);
   function normPostShiftPrefs(v: unknown): Record<string, Record<string, string>> {
     const out: Record<string, Record<string, string>> = {};
     if (!v || typeof v !== "object") return out;
@@ -55,7 +61,9 @@ export async function POST(req: NextRequest) {
       const inner: Record<string, string> = {};
       for (const kind of ["full", "day", "night"] as const) {
         const lvl = (raw as Record<string, unknown>)[kind];
-        if (lvl === "prefer" || lvl === "avoid") inner[kind] = lvl;
+        if (typeof lvl === "string" && POST_SHIFT_LEVELS.has(lvl)) {
+          inner[kind] = lvl;
+        }
       }
       if (Object.keys(inner).length > 0) out[postId] = inner;
     }

@@ -1,6 +1,7 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { getPlanningMonth } from "@/lib/planning-month";
+import { isPostActive } from "@/lib/post-active";
 import { PreferencesForm } from "./preferences-form";
 
 function safeJson<T>(value: string | null | undefined, fallback: T): T {
@@ -25,7 +26,9 @@ export default async function PreferencesPage() {
   });
   if (!employee) return null;
 
-  const posts = await prisma.post.findMany({ orderBy: { sortOrder: "asc" } });
+  const posts = (
+    await prisma.post.findMany({ orderBy: { sortOrder: "asc" } })
+  ).filter(isPostActive);
   const modalities: string[] = safeJson(employee.modalities, []);
   const has24hPostsInSystem = posts.some(
     (p) => p.shiftHours === 24 && p.modality === "КТ",

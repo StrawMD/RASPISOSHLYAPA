@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db";
+import { MONTH_NAMES_RU } from "@/lib/month-names";
 
 export interface PlanningMonth {
   year: number;
@@ -129,21 +130,6 @@ export async function setPlanningMonth(
 
   return { monthId: record.id };
 }
-
-export const MONTH_NAMES_RU = [
-  "Январь",
-  "Февраль",
-  "Март",
-  "Апрель",
-  "Май",
-  "Июнь",
-  "Июль",
-  "Август",
-  "Сентябрь",
-  "Октябрь",
-  "Ноябрь",
-  "Декабрь",
-] as const;
 
 export function monthLabel(year: number, month: number): string {
   return `${MONTH_NAMES_RU[month - 1]} ${year}`;

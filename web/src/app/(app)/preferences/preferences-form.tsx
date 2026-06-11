@@ -45,21 +45,14 @@ const DAY_NAMES = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 const PREF_OPTIONS = [
   { value: "null", label: "Нейтрально" },
   { value: "prefer", label: "Предпочитаю" },
-  { value: "avoid", label: "Не ставить" },
+  { value: "avoid", label: "Лучше не ставить" },
 ];
 
 const PREF3 = [
   { value: "prefer", label: "Предпочитаю" },
   { value: "neutral", label: "Нейтрально" },
-  { value: "avoid", label: "Не ставить" },
+  { value: "avoid", label: "Лучше не ставить" },
 ];
-
-// Компактные градации для типов смен (с/д/н) на суточных постах.
-const SHIFT_KIND3 = [
-  { value: "prefer", label: "Хочу" },
-  { value: "neutral", label: "Нейтр." },
-  { value: "avoid", label: "Не хочу" },
-] as const;
 
 // Типы смен на суточном посту.
 const SHIFT_KINDS = [
@@ -77,8 +70,8 @@ const POST_PREF5 = [
   { value: "prefer_strong", label: "Очень хочу" },
   { value: "prefer", label: "Скорее хочу" },
   { value: "neutral", label: "Нейтрально" },
-  { value: "avoid", label: "Скорее не хочу" },
-  { value: "avoid_hard", label: "Просьба не ставить" },
+  { value: "avoid", label: "Лучше не ставить" },
+  { value: "avoid_hard", label: "Вообще не ставить" },
 ] as const;
 
 const PREF_COLOR: Record<string, string> = {
@@ -184,11 +177,6 @@ function medicalLabel(v: string) {
 }
 function loadLabel(v: string) {
   return LOAD_OPTIONS.find((o) => o.value === v)?.label ?? v;
-}
-function shiftKindLabel(v: string) {
-  const o = SHIFT_KIND3.find((o) => o.value === v);
-  const color = PREF_COLOR[v] ?? "";
-  return <span className={color}>{o?.label ?? v}</span>;
 }
 
 type Post = {
@@ -1117,7 +1105,7 @@ export function PreferencesForm({
               Предпочтения по аппаратам
             </CardTitle>
             <CardDescription>
-              «Просьба не ставить» — солвер не поставит вас на этот аппарат,
+              «Вообще не ставить» — солвер не поставит вас на этот аппарат,
               кроме крайнего случая (и админ может переопределить вручную). На
               суточных постах можно указать отдельно по сменам (сутки / день /
               ночь).
@@ -1130,13 +1118,13 @@ export function PreferencesForm({
                 disabled={readOnly}
                 onCheckedChange={(c) => setAvoidSamePost(!!c)}
               />
-              Не ставить меня на один и тот же аппарат два дня подряд
+              Не ставить меня на один и тот же аппарат подряд (хочу разнообразия, работать на разных аппаратах)
             </label>
             {visiblePosts.map((post) =>
               post.shiftHours === 24 ? (
                 <div
                   key={post.id}
-                  className="rounded border px-3 py-2 text-sm space-y-2"
+                  className="rounded border px-3 py-2 text-sm space-y-1.5"
                 >
                   <div className="flex items-center gap-2">
                     <span className="flex-1 font-medium">{post.name}</span>
@@ -1144,39 +1132,37 @@ export function PreferencesForm({
                       суточный
                     </Badge>
                   </div>
-                  <div className="grid grid-cols-3 gap-2">
-                    {SHIFT_KINDS.map(({ key, label }) => (
-                      <div key={key} className="space-y-1">
-                        <div className="text-[11px] text-muted-foreground">
-                          {label}
-                        </div>
-                        <Select
-                          value={postShiftPrefs[post.id]?.[key] ?? "neutral"}
-                          onValueChange={(v) =>
-                            v && setPostShiftPref(post.id, key, v)
-                          }
-                          disabled={readOnly}
-                        >
-                          <SelectTrigger className="w-full h-7 text-xs">
-                            <SelectValue>{shiftKindLabel}</SelectValue>
-                          </SelectTrigger>
-                          <SelectContent>
-                            {SHIFT_KIND3.map((o) => (
-                              <SelectItem
-                                key={o.value}
-                                value={o.value}
-                                className="text-xs"
-                              >
-                                <span className={PREF_COLOR[o.value] ?? ""}>
-                                  {o.label}
-                                </span>
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                    ))}
-                  </div>
+                  {SHIFT_KINDS.map(({ key, label }) => (
+                    <div key={key} className="flex items-center gap-3">
+                      <span className="flex-1 text-xs text-muted-foreground">
+                        {label}
+                      </span>
+                      <Select
+                        value={postShiftPrefs[post.id]?.[key] ?? "neutral"}
+                        onValueChange={(v) =>
+                          v && setPostShiftPref(post.id, key, v)
+                        }
+                        disabled={readOnly}
+                      >
+                        <SelectTrigger className="w-44 h-7 text-xs">
+                          <SelectValue>{prefLabel}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {POST_PREF5.map((o) => (
+                            <SelectItem
+                              key={o.value}
+                              value={o.value}
+                              className="text-xs"
+                            >
+                              <span className={PREF_COLOR[o.value] ?? ""}>
+                                {o.label}
+                              </span>
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  ))}
                 </div>
               ) : (
                 <div

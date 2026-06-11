@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { toast } from "sonner";
 import { Pencil, Check, Loader2 } from "lucide-react";
-import { MONTH_NAMES_RU } from "@/lib/planning-month";
+import { MONTH_NAMES_RU } from "@/lib/month-names";
 
 interface Props {
   year: number;

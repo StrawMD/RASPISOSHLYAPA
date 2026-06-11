@@ -32,8 +32,8 @@ const PREF_LEVELS = [
   { value: "prefer_strong", label: "Очень хочу", color: "text-green-500" },
   { value: "prefer", label: "Скорее хочу", color: "text-green-400" },
   { value: "neutral", label: "Нейтрально", color: "text-muted-foreground" },
-  { value: "avoid", label: "Скорее не хочу", color: "text-amber-400" },
-  { value: "avoid_hard", label: "Просьба не ставить", color: "text-red-500" },
+  { value: "avoid", label: "Лучше не ставить", color: "text-amber-400" },
+  { value: "avoid_hard", label: "Вообще не ставить", color: "text-red-500" },
 ] as const;
 
 const CONSECUTIVE_OPTIONS = [

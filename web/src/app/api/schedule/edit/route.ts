@@ -51,6 +51,47 @@ export async function GET(req: NextRequest) {
   const posts = await prisma.post.findMany({ orderBy: { sortOrder: "asc" } });
   const employees = await prisma.employee.findMany({ orderBy: { name: "asc" } });
 
+  // Пожелания на месяц этой версии — чтобы редактор мог подсветить
+  // «принуждение к исключению» (вообще не ставить / медотвод / недоступный
+  // день / не сутки-ночь по дню недели) и посчитать сводку.
+  const prefRows = await prisma.preference.findMany({
+    where: { monthId: version.month.id },
+    include: { employee: { select: { name: true } } },
+  });
+  const empByName = new Map(employees.map((e) => [e.name, e]));
+  const prefsByName: Record<string, unknown> = {};
+  for (const pr of prefRows) {
+    const name = pr.employee.name;
+    const pp = safeJson<Record<string, string>>(pr.postPreferences, {});
+    const avoidHardPosts = Object.entries(pp)
+      .filter(([, lvl]) => lvl === "avoid_hard")
+      .map(([pid]) => pid);
+    const psp = safeJson<Record<string, Record<string, string>>>(
+      pr.postShiftPrefs,
+      {},
+    );
+    const postShiftAvoidHard: Record<string, { full?: boolean; day?: boolean; night?: boolean }> = {};
+    for (const [pid, byKind] of Object.entries(psp)) {
+      const flags: { full?: boolean; day?: boolean; night?: boolean } = {};
+      if (byKind?.full === "avoid_hard") flags.full = true;
+      if (byKind?.day === "avoid_hard") flags.day = true;
+      if (byKind?.night === "avoid_hard") flags.night = true;
+      if (Object.keys(flags).length > 0) postShiftAvoidHard[pid] = flags;
+    }
+    prefsByName[name] = {
+      avoidHardPosts,
+      postShiftAvoidHard,
+      unavailableDays: safeJson<number[]>(pr.unavailableDays, []),
+      dowShiftAvoid: safeJson<Record<string, { full?: boolean; night?: boolean }>>(
+        pr.dowShiftAvoid,
+        {},
+      ),
+      medicalRestriction: empByName.get(name)?.medicalRestriction ?? "none",
+      maxFull: pr.maxFull,
+      maxNights: pr.maxNights,
+    };
+  }
+
   return NextResponse.json({
     version: {
       id: version.id,
@@ -71,9 +112,12 @@ export async function GET(req: NextRequest) {
       id: e.id,
       name: e.name,
       rate: e.rate,
+      targetRate: e.targetRate,
       maxRate: e.maxRate,
+      medicalRestriction: e.medicalRestriction,
       allowedPosts: safeJson(e.allowedPosts, []),
     })),
+    prefsByName,
     recentEdits: version.edits.map((e) => ({
       id: e.id,
       day: e.day,

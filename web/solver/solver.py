@@ -43,22 +43,22 @@ def _log(*args, **kwargs):
 # Любой вес можно обнулить (0) — это эквивалентно выключению фактора.
 DEFAULT_WEIGHTS: dict[str, int] = {
     "under_hours": 500,          # штраф за час недобора до целевых часов
-    "over_hours": 200,           # штраф за час переработки сверх цели
+    "over_hours": 90,            # штраф за час переработки (дешёвый «wiggle room»)
     "consec_avoid": 1000,        # штраф за пару смен подряд (pref=avoid)
     "block_reward": 150,         # награда за смежность смен (pref=prefer_N)
     "overrun_penalty": 800,      # штраф за серию длиннее N (pref=prefer_N)
     "rest2": 80,                 # желателен 2-й день отдыха после суток/ночи
     "full_reward": 500,          # награда за монолитные сутки (с)
     "partial_penalty": 200,      # штраф за дробление суток на (д)+(н)
-    "post_prefer": 30,           # база: предпочитаемый пост (скорее хочу)
-    "post_prefer_strong": 80,    # база: очень предпочитаемый пост
-    "post_avoid": 50,            # база: нежелательный пост (скорее не хочу)
-    "post_ban": 80000,           # «просьба не ставить»: квази-запрет (override админом)
+    "post_prefer": 120,          # база: предпочитаемый пост (скорее хочу)
+    "post_prefer_strong": 350,   # база: очень предпочитаемый пост
+    "post_avoid": 400,           # база: нежелательный пост (лучше не ставить)
+    "post_ban": 80000,           # «вообще не ставить»: квази-запрет (override админом)
     "legacy_24h_prefer": 120,    # легаси: «предпочитаю» по типам 24ч-смен
     "shift_time_bias": 600,      # сила режима prefer_full / prefer_day
     "weekend_fairness": 30,      # равномерность выходных между людьми
-    "weekday_prefer": 10,        # база: предпочтение будней/выходных (prefer)
-    "weekday_avoid": 30,         # база: избегание будней/выходных (avoid)
+    "weekday_prefer": 30,        # база: предпочтение будней/выходных (prefer)
+    "weekday_avoid": 120,        # база: избегание будней/выходных (avoid)
     "dow_prefer": 10,            # база: предпочтение по дню недели
     "dow_avoid": 25,             # база: избегание по дню недели
     "desired_date": 20,          # база: желаемая дата
@@ -776,10 +776,11 @@ class ScheduleSolver:
         """Предпочтения по ТИПУ смены на конкретном суточном посту.
 
         Источник — `post_shift_prefs[name] = {postId: {full|day|night: lvl}}`,
-        где lvl ∈ {prefer, avoid}. Применяется только к суточным постам
-        (24ч), к переменным xf (сутки) / xd (день) / xn (ночь). Это даёт
-        раздельные пожелания вида «ССК1: день — хочу, ночь — не ставить».
-        Мягкие веса (post_prefer / post_avoid), со скейлом по стажу.
+        где lvl — 5-уровневая шкала (как у обычных постов):
+        prefer_strong / prefer / neutral / avoid / avoid_hard. Применяется
+        только к суточным постам (24ч), к переменным xf (сутки) / xd (день) /
+        xn (ночь). Даёт пожелания вида «ССК1: день — очень хочу, ночь —
+        просьба не ставить». Веса те же, что и для постов, со скейлом по стажу.
         """
         for e, emp in enumerate(self.employees):
             prefs = self.post_shift_prefs.get(emp.name, {})
@@ -788,10 +789,14 @@ class ScheduleSolver:
             senior_bonus = emp.seniority_score // 2
 
             def lvl_weight(level):
+                if level == "prefer_strong":
+                    return -(self.W["post_prefer_strong"] + senior_bonus)
                 if level == "prefer":
                     return -(self.W["post_prefer"] + senior_bonus)
                 if level == "avoid":
                     return self.W["post_avoid"] + senior_bonus
+                if level == "avoid_hard":
+                    return self.W["post_ban"]
                 return 0
 
             for post_id, by_kind in prefs.items():
