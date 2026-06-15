@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -23,7 +23,22 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Plus, Trash2, Save, ChevronDown, ChevronUp } from "lucide-react";
+import {
+  RATE_OPTIONS,
+  maxRateCap,
+  clampRates,
+  isPartTime,
+} from "@/lib/rates";
+import {
+  Plus,
+  Trash2,
+  Save,
+  ChevronDown,
+  ChevronUp,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+} from "lucide-react";
 import { useRouter } from "next/navigation";
 import { computeTenure, yearsWord } from "@/lib/seniority";
 
@@ -92,16 +107,65 @@ type Post = {
   modality: string;
 };
 
+export type PrefSummary = {
+  employeeId: string;
+  name: string;
+  rate: number;
+  targetRate: number;
+  maxRate: number;
+  modalities: string[];
+  can24h: boolean;
+  medicalRestriction: string;
+  submitted: boolean;
+  loadPref: string | null;
+  shiftTimeMode: string | null;
+  consec: string;
+  preferCount: number;
+  avoidCount: number;
+  banCount: number;
+  unavailableCount: number;
+  softUnavailableCount: number;
+  desiredCount: number;
+  minShifts: number | null;
+  maxFull: number | null;
+  maxNights: number | null;
+  avoidWithCount: number;
+  preferWithCount: number;
+};
+
 interface Props {
   initialEmployees: Employee[];
   posts: Post[];
+  prefSummaries: PrefSummary[];
+  planningLabel: string;
+  submittedCount: number;
 }
 
-export function EmployeeManager({ initialEmployees, posts }: Props) {
+const LOAD_LABELS: Record<string, string> = {
+  less: "Меньше",
+  normal: "Как обычно",
+  more: "Больше",
+};
+const SHIFT_MODE_LABELS: Record<string, string> = {
+  only_full: "Только сутки",
+  prefer_full: "Сутки",
+  neutral: "Нейтр.",
+  prefer_day: "День",
+  prefer_night: "Ночь",
+};
+
+export function EmployeeManager({
+  initialEmployees,
+  posts,
+  prefSummaries,
+  planningLabel,
+  submittedCount,
+}: Props) {
   const router = useRouter();
   const [employees, setEmployees] = useState(initialEmployees);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  const [tab, setTab] = useState<"cards" | "overview">("cards");
 
   const filtered = employees.filter((e) =>
     e.name.toLowerCase().includes(filter.toLowerCase()),
@@ -211,12 +275,14 @@ export function EmployeeManager({ initialEmployees, posts }: Props) {
       <div className="flex items-center justify-between gap-4 flex-wrap">
         <h1 className="text-2xl font-semibold">Сотрудники</h1>
         <div className="flex items-center gap-2">
-          <Input
-            placeholder="Поиск..."
-            value={filter}
-            onChange={(e) => setFilter(e.target.value)}
-            className="w-48"
-          />
+          {tab === "cards" && (
+            <Input
+              placeholder="Поиск..."
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+              className="w-48"
+            />
+          )}
           <Button onClick={addEmployee}>
             <Plus className="h-4 w-4 mr-1" />
             Добавить
@@ -224,7 +290,31 @@ export function EmployeeManager({ initialEmployees, posts }: Props) {
         </div>
       </div>
 
-      <div className="space-y-2">
+      <div className="inline-flex rounded-md border p-0.5 text-sm">
+        <button
+          type="button"
+          onClick={() => setTab("cards")}
+          className={`px-3 py-1 rounded ${tab === "cards" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}
+        >
+          Карточки
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab("overview")}
+          className={`px-3 py-1 rounded ${tab === "overview" ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted"}`}
+        >
+          Сводка пожеланий
+        </button>
+      </div>
+
+      {tab === "overview" ? (
+        <PreferencesOverview
+          rows={prefSummaries}
+          planningLabel={planningLabel}
+          submittedCount={submittedCount}
+        />
+      ) : (
+        <div className="space-y-2">
         {filtered.map((emp) => {
           const expanded = expandedId === emp.id;
           const visiblePosts = getPostsForModalities(emp.modalities);
@@ -294,23 +384,21 @@ export function EmployeeManager({ initialEmployees, posts }: Props) {
                         value={String(emp.rate)}
                         onValueChange={(v) => {
                           if (!v) return;
-                          const rate = parseFloat(v);
-                          const nextTarget = Math.max(
-                            rate,
-                            Math.min(emp.targetRate, emp.maxRate),
+                          updateLocal(
+                            emp.id,
+                            clampRates(
+                              parseFloat(v),
+                              emp.targetRate,
+                              emp.maxRate,
+                            ),
                           );
-                          updateLocal(emp.id, {
-                            rate,
-                            targetRate: nextTarget,
-                            maxRate: Math.max(emp.maxRate, rate),
-                          });
                         }}
                       >
                         <SelectTrigger>
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          {[0.25, 0.5, 0.75, 1.0].map((r) => (
+                          {RATE_OPTIONS.map((r) => (
                             <SelectItem key={r} value={String(r)}>
                               {r}
                             </SelectItem>
@@ -322,18 +410,17 @@ export function EmployeeManager({ initialEmployees, posts }: Props) {
                       <Label>Целевая ставка</Label>
                       <Input
                         type="number"
-                        step={0.25}
+                        step={isPartTime(emp.rate) ? 0.05 : 0.25}
                         min={emp.rate}
                         max={emp.maxRate}
                         value={emp.targetRate}
                         onChange={(e) => {
                           const raw = parseFloat(e.target.value);
                           if (Number.isNaN(raw)) return;
-                          const clamped = Math.min(
-                            Math.max(raw, emp.rate),
-                            emp.maxRate,
+                          updateLocal(
+                            emp.id,
+                            clampRates(emp.rate, raw, emp.maxRate),
                           );
-                          updateLocal(emp.id, { targetRate: clamped });
                         }}
                       />
                       <p className="text-[11px] text-muted-foreground">
@@ -344,19 +431,17 @@ export function EmployeeManager({ initialEmployees, posts }: Props) {
                       <Label>Макс. ставки (потолок)</Label>
                       <Input
                         type="number"
-                        step={0.25}
-                        min={0.5}
-                        max={2.0}
+                        step={isPartTime(emp.rate) ? 0.05 : 0.25}
+                        min={emp.rate}
+                        max={maxRateCap(emp.rate)}
                         value={emp.maxRate}
                         onChange={(e) => {
                           const raw = parseFloat(e.target.value);
                           if (Number.isNaN(raw)) return;
-                          const maxRate = Math.max(raw, emp.rate);
-                          const nextTarget = Math.min(emp.targetRate, maxRate);
-                          updateLocal(emp.id, {
-                            maxRate,
-                            targetRate: nextTarget,
-                          });
+                          updateLocal(
+                            emp.id,
+                            clampRates(emp.rate, emp.targetRate, raw),
+                          );
                         }}
                       />
                     </div>
@@ -494,8 +579,14 @@ export function EmployeeManager({ initialEmployees, posts }: Props) {
                   {visiblePosts.length > 0 && (
                     <div>
                       <Label className="mb-2 block">
-                        Предпочтения по аппаратам
+                        Предпочтения по аппаратам (постоянные)
                       </Label>
+                      <p className="text-[11px] text-muted-foreground mb-2">
+                        Это постоянный дефолт сотрудника. Солвер использует его
+                        только если на конкретный месяц нет анкеты. Реальные
+                        месячные пожелания смотрите во вкладке «Сводка
+                        пожеланий».
+                      </p>
                       <div className="space-y-1">
                         {visiblePosts.map((post) => {
                           const level =
@@ -538,6 +629,20 @@ export function EmployeeManager({ initialEmployees, posts }: Props) {
                     </div>
                   )}
 
+                  <div className="rounded border border-dashed p-3">
+                    <p className="text-xs text-muted-foreground mb-2">
+                      Реальные пожелания сотрудника (аппараты, недоступные/
+                      желаемые дни, нагрузка, лимиты) задаются помесячно. Их можно
+                      посмотреть и изменить за сотрудника в полном редакторе анкеты.
+                    </p>
+                    <a
+                      href={`/admin/employees/${emp.id}/preferences`}
+                      className={buttonVariants({ size: "sm", variant: "outline" })}
+                    >
+                      Анкета на {planningLabel} →
+                    </a>
+                  </div>
+
                   <div className="flex items-center gap-2 pt-2">
                     <Button size="sm" onClick={() => saveEmployee(emp)}>
                       <Save className="h-3.5 w-3.5 mr-1" />
@@ -576,7 +681,8 @@ export function EmployeeManager({ initialEmployees, posts }: Props) {
             </Card>
           );
         })}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -659,5 +765,347 @@ function TenureFields({
         </div>
       </div>
     </div>
+  );
+}
+
+type SortDir = "asc" | "desc";
+
+type OverviewColumn = {
+  key: string;
+  label: string;
+  title?: string;
+  align?: "left" | "center";
+  sortValue: (r: PrefSummary) => number | string;
+  render: (r: PrefSummary) => ReactNode;
+};
+
+const LOAD_ORDER: Record<string, number> = { less: 0, normal: 1, more: 2 };
+
+function numCell(n: number | null, zeroDim = true) {
+  if (n == null) return <span className="text-muted-foreground">—</span>;
+  if (n === 0 && zeroDim)
+    return <span className="text-muted-foreground">0</span>;
+  return n;
+}
+
+const OVERVIEW_COLUMNS: OverviewColumn[] = [
+  {
+    key: "submitted",
+    label: "Анкета",
+    title: "Подал(а) пожелания на планируемый месяц",
+    align: "center",
+    sortValue: (r) => (r.submitted ? 1 : 0),
+    render: (r) =>
+      r.submitted ? (
+        <span className="text-green-500">✓</span>
+      ) : (
+        <span className="text-muted-foreground">—</span>
+      ),
+  },
+  {
+    key: "rate",
+    label: "Ставка",
+    align: "center",
+    sortValue: (r) => r.rate,
+    render: (r) => r.rate,
+  },
+  {
+    key: "targetRate",
+    label: "Целевая",
+    align: "center",
+    sortValue: (r) => r.targetRate,
+    render: (r) => r.targetRate,
+  },
+  {
+    key: "modalities",
+    label: "Мод.",
+    align: "center",
+    sortValue: (r) => r.modalities.join(","),
+    render: (r) => r.modalities.join(", ") || "—",
+  },
+  {
+    key: "can24h",
+    label: "24ч",
+    align: "center",
+    sortValue: (r) => (r.can24h ? 1 : 0),
+    render: (r) => (r.can24h ? "✓" : "—"),
+  },
+  {
+    key: "loadPref",
+    label: "Нагрузка",
+    title: "Желаемая нагрузка на месяц",
+    align: "center",
+    sortValue: (r) => (r.loadPref ? LOAD_ORDER[r.loadPref] ?? 1 : -1),
+    render: (r) =>
+      r.loadPref ? LOAD_LABELS[r.loadPref] ?? r.loadPref : "—",
+  },
+  {
+    key: "shiftTimeMode",
+    label: "Смены",
+    title: "Предпочтение по времени смен",
+    align: "center",
+    sortValue: (r) => r.shiftTimeMode ?? "",
+    render: (r) =>
+      r.shiftTimeMode
+        ? SHIFT_MODE_LABELS[r.shiftTimeMode] ?? r.shiftTimeMode
+        : "—",
+  },
+  {
+    key: "consec",
+    label: "Очерёдность",
+    title: "Предпочтение по сменам подряд",
+    align: "center",
+    sortValue: (r) => r.consec,
+    render: (r) => consecLabel(r.consec),
+  },
+  {
+    key: "preferCount",
+    label: "Хочу",
+    title: "Сколько аппаратов/смен помечено «хочу»",
+    align: "center",
+    sortValue: (r) => r.preferCount,
+    render: (r) =>
+      r.preferCount > 0 ? (
+        <span className="text-green-500">{r.preferCount}</span>
+      ) : (
+        numCell(0)
+      ),
+  },
+  {
+    key: "avoidCount",
+    label: "Лучше нет",
+    title: "Сколько аппаратов помечено «лучше не ставить»",
+    align: "center",
+    sortValue: (r) => r.avoidCount,
+    render: (r) =>
+      r.avoidCount > 0 ? (
+        <span className="text-amber-400">{r.avoidCount}</span>
+      ) : (
+        numCell(0)
+      ),
+  },
+  {
+    key: "banCount",
+    label: "Вообще нет",
+    title: "Сколько аппаратов/смен помечено «вообще не ставить»",
+    align: "center",
+    sortValue: (r) => r.banCount,
+    render: (r) =>
+      r.banCount > 0 ? (
+        <span className="text-red-500">{r.banCount}</span>
+      ) : (
+        numCell(0)
+      ),
+  },
+  {
+    key: "unavailableCount",
+    label: "Недост.",
+    title: "Число недоступных дней (жёстко)",
+    align: "center",
+    sortValue: (r) => r.unavailableCount,
+    render: (r) => numCell(r.unavailableCount),
+  },
+  {
+    key: "softUnavailableCount",
+    label: "Жел. своб.",
+    title: "Дни, в которые желательно не ставить (мягко)",
+    align: "center",
+    sortValue: (r) => r.softUnavailableCount,
+    render: (r) => numCell(r.softUnavailableCount),
+  },
+  {
+    key: "desiredCount",
+    label: "Жел. даты",
+    title: "Число желаемых дат работы",
+    align: "center",
+    sortValue: (r) => r.desiredCount,
+    render: (r) => numCell(r.desiredCount),
+  },
+  {
+    key: "minShifts",
+    label: "Мин. смен",
+    align: "center",
+    sortValue: (r) => r.minShifts ?? -1,
+    render: (r) => numCell(r.minShifts, false),
+  },
+  {
+    key: "maxFull",
+    label: "Макс. сутки",
+    align: "center",
+    sortValue: (r) => r.maxFull ?? Number.MAX_SAFE_INTEGER,
+    render: (r) => numCell(r.maxFull, false),
+  },
+  {
+    key: "maxNights",
+    label: "Макс. ночи",
+    align: "center",
+    sortValue: (r) => r.maxNights ?? Number.MAX_SAFE_INTEGER,
+    render: (r) => numCell(r.maxNights, false),
+  },
+  {
+    key: "preferWithCount",
+    label: "С кем",
+    title: "Число коллег «хочу вместе»",
+    align: "center",
+    sortValue: (r) => r.preferWithCount,
+    render: (r) => numCell(r.preferWithCount),
+  },
+  {
+    key: "avoidWithCount",
+    label: "Не с кем",
+    title: "Число коллег «не вместе»",
+    align: "center",
+    sortValue: (r) => r.avoidWithCount,
+    render: (r) => numCell(r.avoidWithCount),
+  },
+  {
+    key: "medical",
+    label: "Медотвод",
+    align: "center",
+    sortValue: (r) => r.medicalRestriction,
+    render: (r) =>
+      r.medicalRestriction === "none" ? (
+        "—"
+      ) : (
+        <span className="text-red-400">
+          {medicalLabel(r.medicalRestriction)}
+        </span>
+      ),
+  },
+];
+
+function PreferencesOverview({
+  rows,
+  planningLabel,
+  submittedCount,
+}: {
+  rows: PrefSummary[];
+  planningLabel: string;
+  submittedCount: number;
+}) {
+  const [sortKey, setSortKey] = useState<string>("name");
+  const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const [filter, setFilter] = useState("");
+
+  function toggleSort(key: string) {
+    if (sortKey === key) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir("desc");
+    }
+  }
+
+  const col = OVERVIEW_COLUMNS.find((c) => c.key === sortKey);
+  const filtered = rows.filter((r) =>
+    r.name.toLowerCase().includes(filter.toLowerCase()),
+  );
+  const sorted = [...filtered].sort((a, b) => {
+    let av: number | string;
+    let bv: number | string;
+    if (sortKey === "name" || !col) {
+      av = a.name;
+      bv = b.name;
+    } else {
+      av = col.sortValue(a);
+      bv = col.sortValue(b);
+    }
+    let cmp: number;
+    if (typeof av === "number" && typeof bv === "number") cmp = av - bv;
+    else cmp = String(av).localeCompare(String(bv), "ru");
+    return sortDir === "asc" ? cmp : -cmp;
+  });
+
+  function sortIcon(active: boolean) {
+    if (!active)
+      return <ArrowUpDown className="h-3 w-3 inline opacity-40 ml-0.5" />;
+    return sortDir === "asc" ? (
+      <ArrowUp className="h-3 w-3 inline ml-0.5" />
+    ) : (
+      <ArrowDown className="h-3 w-3 inline ml-0.5" />
+    );
+  }
+
+  return (
+    <Card>
+      <CardContent className="space-y-3 pt-4">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <p className="text-sm text-muted-foreground">
+            Пожелания на <span className="font-medium text-foreground">{planningLabel}</span>
+            {" · "}
+            подали {submittedCount} из {rows.length}. Жми на заголовок, чтобы
+            сортировать.
+          </p>
+          <Input
+            placeholder="Поиск..."
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="w-44"
+          />
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr className="border-b">
+                <th
+                  className="text-left font-medium py-2 px-2 sticky left-0 bg-card cursor-pointer select-none whitespace-nowrap"
+                  onClick={() => toggleSort("name")}
+                >
+                  Сотрудник
+                  {sortIcon(sortKey === "name")}
+                </th>
+                {OVERVIEW_COLUMNS.map((c) => (
+                  <th
+                    key={c.key}
+                    title={c.title}
+                    className={`font-medium py-2 px-2 cursor-pointer select-none whitespace-nowrap ${
+                      c.align === "left" ? "text-left" : "text-center"
+                    }`}
+                    onClick={() => toggleSort(c.key)}
+                  >
+                    {c.label}
+                    {sortIcon(sortKey === c.key)}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {sorted.map((r) => (
+                <tr
+                  key={r.employeeId}
+                  className={`border-b last:border-0 hover:bg-muted/40 ${
+                    r.submitted ? "" : "opacity-60"
+                  }`}
+                >
+                  <td className="text-left py-1.5 px-2 sticky left-0 bg-card font-medium whitespace-nowrap">
+                    {r.name}
+                  </td>
+                  {OVERVIEW_COLUMNS.map((c) => (
+                    <td
+                      key={c.key}
+                      className={`py-1.5 px-2 whitespace-nowrap ${
+                        c.align === "left" ? "text-left" : "text-center"
+                      }`}
+                    >
+                      {c.render(r)}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+              {sorted.length === 0 && (
+                <tr>
+                  <td
+                    colSpan={OVERVIEW_COLUMNS.length + 1}
+                    className="py-6 text-center text-muted-foreground"
+                  >
+                    Нет данных
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

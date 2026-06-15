@@ -29,6 +29,9 @@ type Employee = {
   maxRate: number;
   medicalRestriction: string;
   allowedPosts: string[];
+  availableDays?: number | null;
+  daysInMonth?: number | null;
+  availFactor?: number | null;
 };
 type PrefInfo = CompliancePrefs & {
   maxFull: number | null;
@@ -143,6 +146,10 @@ export function ScheduleEditPage() {
   const [loading, setLoading] = useState(true);
   const [showLog, setShowLog] = useState(false);
   const [relaxed, setRelaxed] = useState(false);
+  const [overtime, setOvertime] = useState<
+    { name: string; overTarget: number; overCeiling: number }[]
+  >([]);
+  const [emergencyOvertimeTotal, setEmergencyOvertimeTotal] = useState(0);
   // Целевое число людей в ячейке (на момент открытия) = занято + недобор.
   // Подсветка «дыр» гаснет по мере дозаполнения в текущей сессии.
   const [cellTargets, setCellTargets] = useState<Record<string, number>>({});
@@ -162,6 +169,8 @@ export function ScheduleEditPage() {
       setPrefsByName(data.prefsByName ?? {});
       setRecentEdits(data.recentEdits);
       setRelaxed(Boolean(data.relaxed));
+      setOvertime(data.overtime ?? []);
+      setEmergencyOvertimeTotal(data.emergencyOvertimeTotal ?? 0);
 
       if (!targetsInitialized.current) {
         targetsInitialized.current = true;
@@ -216,6 +225,9 @@ export function ScheduleEditPage() {
         rate: e.rate,
         targetRate: e.targetRate,
         maxRate: e.maxRate,
+        availableDays: e.availableDays ?? null,
+        daysInMonth: e.daysInMonth ?? null,
+        availFactor: e.availFactor ?? null,
         maxFull: pi?.maxFull ?? null,
         maxNights: pi?.maxNights ?? null,
         prefs: pi
@@ -367,6 +379,30 @@ export function ScheduleEditPage() {
               </>
             ) : (
               <>Все пропуски закрыты вручную. Можно публиковать.</>
+            )}
+          </div>
+        </div>
+      )}
+
+      {emergencyOvertimeTotal > 0 && (
+        <div className="flex items-start gap-2 rounded-md border border-orange-300 bg-orange-50 dark:bg-orange-950/20 px-3 py-2 text-sm">
+          <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-orange-600" />
+          <div className="space-y-1">
+            <div>
+              На момент генерации месяц не закрывался в пределах желаемых
+              потолков — потребовалась аварийная переработка{" "}
+              <strong>{emergencyOvertimeTotal}ч</strong> сверх maxRate
+              (распределена тем, у кого выше потолок и меньше стаж). Люди с
+              превышением подсвечены красным значком «+Nч сверх».
+            </div>
+            {overtime.filter((o) => o.overCeiling > 0).length > 0 && (
+              <div className="text-xs text-muted-foreground">
+                Сверх потолка:{" "}
+                {overtime
+                  .filter((o) => o.overCeiling > 0)
+                  .map((o) => `${o.name} +${o.overCeiling}ч`)
+                  .join(", ")}
+              </div>
             )}
           </div>
         </div>
@@ -695,8 +731,20 @@ export function ScheduleEditPage() {
                       <td className="py-1 px-2 text-right tabular-nums">
                         {Math.round(r.hours)}
                       </td>
-                      <td className="py-1 px-2 text-right tabular-nums text-muted-foreground">
+                      <td
+                        className="py-1 px-2 text-right tabular-nums text-muted-foreground"
+                        title={
+                          r.availFactor < 1
+                            ? `Полная ставка: ${Math.round(r.nominalTargetHours)}ч · доступно ${r.availableDays ?? "?"} дн · цель снижена до ${Math.round(r.availFactor * 100)}%`
+                            : `Полная ставка: ${Math.round(r.nominalTargetHours)}ч`
+                        }
+                      >
                         {Math.round(r.targetHours)}
+                        {r.availFactor < 1 && (
+                          <span className="ml-1 text-[10px] opacity-60">
+                            ↓{r.availableDays ?? "?"}д
+                          </span>
+                        )}
                       </td>
                       <td
                         className={`py-1 px-2 text-right tabular-nums font-medium ${pctClass}`}

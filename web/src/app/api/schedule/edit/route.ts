@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { workNormHours } from "@/lib/rates";
 
 function safeJson<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
@@ -41,6 +42,8 @@ export async function GET(req: NextRequest) {
     relaxed?: boolean;
     unfilled?: { postId: string; post: string; day: number; kind: string; count: number }[];
     unfilledCount?: number;
+    overtime?: { name: string; overTarget: number; overCeiling: number }[];
+    emergencyOvertimeTotal?: number;
   }>(version.solverParams, {});
 
   let normHours = version.month.normHours ?? 0;
@@ -59,6 +62,73 @@ export async function GET(req: NextRequest) {
     include: { employee: { select: { name: true } } },
   });
   const empByName = new Map(employees.map((e) => [e.name, e]));
+
+  // Доступность сотрудника на месяц (для честной цели/% в сводке): тот же расчёт,
+  // что и в генерации — объединяем отсутствия из Availability, недоступные дни из
+  // пожеланий и регулярную недельную недоступность профиля.
+  const daysInMonth = new Date(version.month.year, version.month.month, 0).getDate();
+  const availabilityRows = await prisma.availability.findMany({
+    where: { monthId: version.month.id },
+    include: { employee: { select: { name: true } } },
+  });
+  const absentByName: Record<string, Set<number>> = {};
+  const addAbsent = (name: string, days: number[]) => {
+    const set = absentByName[name] ?? (absentByName[name] = new Set<number>());
+    for (const d of days) set.add(d);
+  };
+  for (const av of availabilityRows) {
+    addAbsent(av.employee.name, safeJson<number[]>(av.unavailableDays, []));
+  }
+  for (const pr of prefRows) {
+    addAbsent(pr.employee.name, safeJson<number[]>(pr.unavailableDays, []));
+  }
+  for (const e of employees) {
+    const dows = safeJson<number[]>(e.recurringUnavailableDows, []);
+    if (dows.length === 0) continue;
+    const dowSet = new Set(dows);
+    for (let d = 1; d <= daysInMonth; d++) {
+      const dow = (new Date(version.month.year, version.month.month - 1, d).getDay() + 6) % 7;
+      if (dowSet.has(dow)) addAbsent(e.name, [d]);
+    }
+  }
+  const availableDaysByName: Record<string, number> = {};
+  for (const e of employees) {
+    const absent = absentByName[e.name]?.size ?? 0;
+    availableDaysByName[e.name] = Math.max(0, daysInMonth - absent);
+  }
+
+  // Коэффициент доступности по РАБОЧЕЙ норме (как в генерации): доступная норма
+  // (будни×6 минус праздники/предпраздничные, без дней отпуска) ÷ полная норма
+  // месяца. Так отображаемая цель совпадает с тем, что держит солвер.
+  const holidays = await prisma.holiday.findMany({
+    where: { year: version.month.year },
+  });
+  const holidaySet = new Set(holidays.map((h) => h.date));
+  const fmtDate = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+      d.getDate(),
+    ).padStart(2, "0")}`;
+  const isHolidayDate = (d: Date) => holidaySet.has(fmtDate(d));
+  const fullWorkNorm = workNormHours(
+    version.month.year,
+    version.month.month,
+    isHolidayDate,
+  );
+  const availFactorByName: Record<string, number> = {};
+  for (const e of employees) {
+    const absentSet = absentByName[e.name] ?? new Set<number>();
+    const availWorkNorm = workNormHours(
+      version.month.year,
+      version.month.month,
+      isHolidayDate,
+      (day) => !absentSet.has(day),
+    );
+    availFactorByName[e.name] =
+      fullWorkNorm > 0
+        ? Math.max(0, Math.min(1, availWorkNorm / fullWorkNorm))
+        : 1;
+  }
+
   const prefsByName: Record<string, unknown> = {};
   for (const pr of prefRows) {
     const name = pr.employee.name;
@@ -107,6 +177,8 @@ export async function GET(req: NextRequest) {
     relaxed: Boolean(sp.relaxed),
     unfilled: sp.unfilled ?? [],
     unfilledCount: sp.unfilledCount ?? 0,
+    overtime: sp.overtime ?? [],
+    emergencyOvertimeTotal: sp.emergencyOvertimeTotal ?? 0,
     posts,
     employees: employees.map((e) => ({
       id: e.id,
@@ -116,6 +188,9 @@ export async function GET(req: NextRequest) {
       maxRate: e.maxRate,
       medicalRestriction: e.medicalRestriction,
       allowedPosts: safeJson(e.allowedPosts, []),
+      availableDays: availableDaysByName[e.name] ?? daysInMonth,
+      daysInMonth,
+      availFactor: availFactorByName[e.name] ?? 1,
     })),
     prefsByName,
     recentEdits: version.edits.map((e) => ({

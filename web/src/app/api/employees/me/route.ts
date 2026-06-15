@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { clampRates } from "@/lib/rates";
 
 function safeJson<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
@@ -27,15 +28,15 @@ export async function PUT(req: NextRequest) {
     return NextResponse.json({ error: "Employee not found" }, { status: 404 });
   }
 
-  const rate =
+  const rawRate =
     typeof body.rate === "number" && body.rate > 0 ? body.rate : current.rate;
-  const maxRate =
+  const rawMax =
     typeof body.maxRate === "number" && body.maxRate > 0
-      ? Math.max(body.maxRate, rate)
-      : Math.max(current.maxRate, rate);
+      ? body.maxRate
+      : current.maxRate;
   const rawTarget =
     typeof body.targetRate === "number" ? body.targetRate : current.targetRate;
-  const targetRate = Math.min(Math.max(rawTarget, rate), maxRate);
+  const { rate, targetRate, maxRate } = clampRates(rawRate, rawTarget, rawMax);
 
   const modalities: string[] = Array.isArray(body.modalities)
     ? body.modalities.filter((m: unknown) => typeof m === "string" && ALLOWED_MODALITIES.has(m))

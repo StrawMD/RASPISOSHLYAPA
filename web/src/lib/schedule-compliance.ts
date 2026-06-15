@@ -32,6 +32,17 @@ export interface ComplianceEmployee {
   maxRate: number;
   maxFull?: number | null;
   maxNights?: number | null;
+  /** Сколько дней месяца сотрудник доступен (всего минус отсутствия/выходные). */
+  availableDays?: number | null;
+  /** Дней в месяце (для коэффициента доступности). */
+  daysInMonth?: number | null;
+  /**
+   * Готовый коэффициент доступности по РАБОЧЕЙ норме (доступная норма ÷ полная
+   * норма месяца — кадровый алгоритм: будни×6, минус праздники/предпраздничные).
+   * Если задан, используется вместо грубого availableDays/daysInMonth — так
+   * отображаемая цель совпадает с тем, что фактически держит солвер.
+   */
+  availFactor?: number | null;
   prefs?: CompliancePrefs | null;
 }
 
@@ -50,8 +61,15 @@ export interface ComplianceRow {
   rate: number;
   targetRate: number;
   hours: number;
+  /** Цель с поправкой на доступность (норма × целевая ставка × доступность). */
   targetHours: number;
-  /** % к целевым часам (норма × целевая ставка). */
+  /** Номинальная цель без поправки (норма × целевая ставка). */
+  nominalTargetHours: number;
+  /** Коэффициент доступности (доступные дни / дни месяца), 0..1. */
+  availFactor: number;
+  /** Доступные дни месяца. */
+  availableDays: number | null;
+  /** % к целевым часам с поправкой на доступность. */
   pct: number | null;
   shifts: number;
   fullCount: number;
@@ -154,13 +172,27 @@ export function analyzeSchedule(
     if (!r) {
       const emp = empMap.get(name);
       const targetRate = emp?.targetRate ?? emp?.rate ?? 1;
-      const targetHours = normHours > 0 ? normHours * targetRate : 0;
+      const nominalTargetHours = normHours > 0 ? normHours * targetRate : 0;
+      // Поправка на доступность: человек, доступный 7 дней из 31, не отработает
+      // полную ставку — цель и % считаем от достижимого, как и солвер.
+      const dim = emp?.daysInMonth ?? null;
+      const availDays = emp?.availableDays ?? null;
+      const availFactor =
+        emp?.availFactor != null
+          ? Math.max(0, Math.min(1, emp.availFactor))
+          : dim && dim > 0 && availDays != null
+            ? Math.max(0, Math.min(1, availDays / dim))
+            : 1;
+      const targetHours = nominalTargetHours * availFactor;
       r = {
         name,
         rate: emp?.rate ?? 0,
         targetRate,
         hours: 0,
         targetHours,
+        nominalTargetHours,
+        availFactor,
+        availableDays: availDays,
         pct: null,
         shifts: 0,
         fullCount: 0,

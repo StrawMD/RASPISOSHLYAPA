@@ -5,6 +5,7 @@ import { runSolver, SolverInput, SolverInfeasibleError } from "@/lib/solver-brid
 import { computeTenure } from "@/lib/seniority";
 import { prismaSchemaHint } from "@/lib/prisma-schema-hint";
 import { validateFixedSlots } from "@/lib/validate-fixed-slots";
+import { clampRates, workNormHours } from "@/lib/rates";
 
 function safeJson<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
@@ -312,22 +313,83 @@ export async function POST(req: NextRequest) {
 
   const employeeTargetHours: Record<string, number> = {};
   const employeeMaxHours: Record<string, number> = {};
+  const employeeHardMaxHours: Record<string, number> = {};
+  const employeeFloorHours: Record<string, number> = {};
   const nh = normHours || monthRecord.normHours;
 
+  // Аварийная переработка: когда суммарный спрос превышает сумму желаемых
+  // потолков (maxRate), солвер может выйти за желаемый потолок до аварийного
+  // = maxRate + буфер, но не выше абсолютного максимума по ТК (2.0 ставки).
+  // Внутри этой зоны переработка штрафуется и честно распределяется (см. солвер).
+  const EMERGENCY_BUFFER_RATE = 0.5;
+  const ABSOLUTE_MAX_RATE = 2.0;
+
+  // Эффективные ставки с учётом правил (полставочники ≤ 0.75) — единый источник
+  // для ёмкости и для формулы переработки в солвере.
+  const effRates = new Map<string, { rate: number; targetRate: number; maxRate: number }>();
   for (const emp of employees) {
-    const absentDays = (absences[emp.name] ?? []).length;
-    const avail = Math.max(0, (daysInMonth - absentDays) / daysInMonth);
-    const target = emp.targetRate ?? emp.rate;
-    let boundedTarget = Math.min(Math.max(target, emp.rate), emp.maxRate);
-    // Желаемая нагрузка на месяц: мягко двигаем цель в пределах [0.25, maxRate].
+    effRates.set(
+      emp.name,
+      clampRates(emp.rate, emp.targetRate ?? emp.rate, emp.maxRate),
+    );
+  }
+
+  // Кадровый алгоритм нормы часов: будни (Пн–Пт) минус праздники × 6 ч,
+  // предпраздничный день — на час короче. Доступность месяца с отпуском
+  // считаем по РАБОЧИМ дням, а не по календарным: «пол» базовой ставки
+  // снижается ровно на рабочие дни отпуска, а не пропорцией по всем дням.
+  const fmtDate = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+      d.getDate(),
+    ).padStart(2, "0")}`;
+  const isHolidayDate = (d: Date) => holidayDates.has(fmtDate(d));
+  const fullWorkNorm = workNormHours(year, month, isHolidayDate);
+
+  for (const emp of employees) {
+    const eff = effRates.get(emp.name)!;
+    const absentSet = new Set(absences[emp.name] ?? []);
+    const availWorkNorm = workNormHours(
+      year,
+      month,
+      isHolidayDate,
+      (day) => !absentSet.has(day),
+    );
+    // Доля доступной рабочей нормы (с учётом праздников/предпраздничных).
+    // Отсутствия только в выходные не снижают её — как и требует алгоритм.
+    const avail =
+      fullWorkNorm > 0 ? Math.max(0, Math.min(1, availWorkNorm / fullWorkNorm)) : 0;
+    // Есть ли хоть один календарный день, когда сотрудник доступен (включая
+    // выходные) — чтобы не блокировать покрытие смен у того, чья рабочая норма
+    // обнулилась отпуском, но кто всё ещё может выйти (напр. на выходной пост).
+    const hasAvailableDay = absentSet.size < daysInMonth;
+    let boundedTarget = eff.targetRate;
+    // Желаемая нагрузка на месяц: мягко двигаем цель в пределах [rate, maxRate].
     const load = loadPrefByName[emp.name];
     if (load === "more") {
-      boundedTarget = Math.min(emp.maxRate, boundedTarget + 0.25);
+      boundedTarget = Math.min(eff.maxRate, boundedTarget + 0.25);
     } else if (load === "less") {
-      boundedTarget = Math.max(0.25, boundedTarget - 0.25);
+      boundedTarget = Math.max(eff.rate, boundedTarget - 0.25);
     }
+    const hardRate = Math.min(
+      ABSOLUTE_MAX_RATE,
+      eff.maxRate + EMERGENCY_BUFFER_RATE,
+    );
     employeeTargetHours[emp.name] = nh * boundedTarget * avail;
-    employeeMaxHours[emp.name] = nh * emp.maxRate * avail;
+    employeeMaxHours[emp.name] = nh * eff.maxRate * avail;
+    employeeHardMaxHours[emp.name] = nh * hardRate * avail;
+    // Пол базовой ставки: договорная ставка (0.5/1.0) × норма × доступность.
+    employeeFloorHours[emp.name] = nh * eff.rate * avail;
+
+    // Гранулярность смены: если доступность так мала, что потолок часов
+    // опускается ниже одной полной смены (напр. суточник, доступный только по
+    // выходным), человека нельзя поставить вообще. Гарантируем потолок не ниже
+    // одной смены (24ч для суточников, иначе 12ч), пока есть хоть один доступный
+    // день — иначе договорную ставку для него физически не закрыть.
+    if (hasAvailableDay) {
+      const shiftUnit = emp.can24h ? 24 : 12;
+      if (employeeMaxHours[emp.name] < shiftUnit) employeeMaxHours[emp.name] = shiftUnit;
+      if (employeeHardMaxHours[emp.name] < shiftUnit) employeeHardMaxHours[emp.name] = shiftUnit;
+    }
   }
 
   // Веса целевой функции из настроек (если заданы); иначе дефолты в солвере.
@@ -384,11 +446,13 @@ export async function POST(req: NextRequest) {
       const t = computeTenure(e, year);
       const effectiveConsecutive =
         consecutiveOverride[e.name] ?? e.consecutivePref ?? "avoid";
+      const eff = effRates.get(e.name)!;
       return {
         name: e.name,
         rate: e.rate,
         allowedPosts: safeJson(e.allowedPosts, []),
-        maxRate: e.maxRate,
+        maxRate: eff.maxRate,
+        targetRate: eff.targetRate,
         seniority: e.seniority,
         hospitalYears: t.hospitalYears,
         careerYears: t.careerYears,
@@ -411,6 +475,8 @@ export async function POST(req: NextRequest) {
       exclusions,
       employeeTargetHours,
       employeeMaxHours,
+      employeeHardMaxHours,
+      employeeFloorHours,
       fixedSlots: fixedSlotsForSolver,
     },
     postPreferences,
@@ -445,10 +511,14 @@ export async function POST(req: NextRequest) {
     const relaxedDraft = Boolean(result.relaxed);
     const unfilled = result.unfilled ?? [];
     const unfilledCount = result.unfilledCount ?? 0;
+    const overtime = result.overtime ?? [];
+    const emergencyOvertimeTotal = result.emergencyOvertimeTotal ?? 0;
     const baseName = versionName || `Версия ${versionCount + 1}`;
     const finalName = relaxedDraft
       ? `${baseName} (черновик с пропусками: ${unfilledCount})`
-      : baseName;
+      : emergencyOvertimeTotal > 0
+        ? `${baseName} (переработка сверх потолка: ${emergencyOvertimeTotal}ч)`
+        : baseName;
 
     const version = await prisma.scheduleVersion.create({
       data: {
@@ -466,6 +536,8 @@ export async function POST(req: NextRequest) {
           relaxed: relaxedDraft,
           unfilled,
           unfilledCount,
+          overtime,
+          emergencyOvertimeTotal,
         }),
         createdById: session.user.id,
       },
@@ -481,6 +553,8 @@ export async function POST(req: NextRequest) {
       relaxed: relaxedDraft,
       unfilled,
       unfilledCount,
+      overtime,
+      emergencyOvertimeTotal,
     });
   } catch (e: unknown) {
     console.error("[api/schedule/generate]", e);

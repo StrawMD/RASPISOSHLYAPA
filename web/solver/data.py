@@ -57,7 +57,8 @@ class Employee:
     name: str
     rate: float                        # 0.5 / 1.0
     allowed_posts: list[str]           # ID постов, на которых может работать
-    max_rate: float = 1.5              # потолок в ставках (1.5 по умолчанию)
+    max_rate: float = 1.5              # желаемый потолок в ставках (1.5 по умолчанию)
+    target_rate: float = 1.0           # целевая ставка (для расчёта «неохоты» переработки)
     seniority: int = 0                 # устаревшее поле (fallback)
     hospital_years: int = 0            # стаж именно в больнице
     career_years: int = 0              # общий стаж в профессии
@@ -163,6 +164,13 @@ class MonthConfig:
     exclusions: dict[str, list[int]] = field(default_factory=dict)
     employee_target_hours: dict[str, float] = field(default_factory=dict)
     employee_max_hours: dict[str, float] = field(default_factory=dict)
+    # Аварийный потолок часов (maxRate + буфер, ≤ 2.0). Жёсткий предел; выход
+    # за желаемый max_hours до этого значения штрафуется как переработка.
+    employee_hard_max_hours: dict[str, float] = field(default_factory=dict)
+    # «Пол» базовой ставки (rate × норма × доступность). Недобор НИЖЕ этого
+    # уровня штрафуется почти как жёсткое нарушение — договорная ставка (0.5/1.0)
+    # должна заполняться точно. Между полом и целью — обычный мягкий недобор.
+    employee_floor_hours: dict[str, float] = field(default_factory=dict)
 
     @property
     def days(self) -> list[int]:
@@ -187,14 +195,22 @@ class MonthConfig:
 
 
 def compute_norm_hours(year: int, month: int) -> float:
-    """Рабочие дни (пн–пт, минус праздники) × 6 часов."""
+    """Норма часов на 1.0 ставку (кадровый алгоритм).
+
+    Будни (Пн–Пт), не являющиеся праздником, = 6 часов; праздники не считаются;
+    предпраздничный рабочий день — на час короче (5 часов). Выходные не входят.
+    """
     _, num_days = calendar.monthrange(year, month)
-    work_days = 0
+    hours = 0.0
     for d in range(1, num_days + 1):
         dt = date(year, month, d)
-        if dt.weekday() < 5 and dt not in RUSSIAN_HOLIDAYS_2026:
-            work_days += 1
-    return work_days * 6.0
+        if dt.weekday() >= 5 or dt in RUSSIAN_HOLIDAYS_2026:
+            continue
+        h = 6.0
+        if (dt + timedelta(days=1)) in RUSSIAN_HOLIDAYS_2026:
+            h -= 1.0  # предпраздничный день короче на час
+        hours += h
+    return hours
 
 
 def generate_month_config(
@@ -206,6 +222,8 @@ def generate_month_config(
     exclusions: dict[str, list[int]] | None = None,
     employee_target_hours: dict[str, float] | None = None,
     employee_max_hours: dict[str, float] | None = None,
+    employee_hard_max_hours: dict[str, float] | None = None,
+    employee_floor_hours: dict[str, float] | None = None,
     posts: list[Post] | None = None,
 ) -> MonthConfig:
     """Генерация конфига на месяц с дефолтными активными днями для каждого поста.
@@ -252,4 +270,6 @@ def generate_month_config(
         exclusions=exclusions or {},
         employee_target_hours=employee_target_hours or {},
         employee_max_hours=employee_max_hours or {},
+        employee_hard_max_hours=employee_hard_max_hours or {},
+        employee_floor_hours=employee_floor_hours or {},
     )

@@ -42,8 +42,12 @@ def _log(*args, **kwargs):
 # константами, поэтому без переданного конфига поведение не меняется.
 # Любой вес можно обнулить (0) — это эквивалентно выключению фактора.
 DEFAULT_WEIGHTS: dict[str, int] = {
-    "under_hours": 500,          # штраф за час недобора до целевых часов
-    "over_hours": 90,            # штраф за час переработки (дешёвый «wiggle room»)
+    "under_hours": 500,          # штраф за час недобора между базовой ставкой и целью
+    "under_floor": 6000,         # штраф за час НИЖЕ базовой ставки (0.5/1.0) — почти жёстко:
+                                 # договорная ставка должна заполняться точно
+    "over_hours": 90,            # штраф за час переработки в пределах потолка (дешёвый «wiggle room»)
+    "over_ceiling": 300,         # база аварийной переработки СВЕРХ желаемого потолка
+                                 # (за час, ×коэффициент неохоты ×номер тира — выпукло)
     "consec_avoid": 1000,        # штраф за пару смен подряд (pref=avoid)
     "block_reward": 150,         # награда за смежность смен (pref=prefer_N)
     "overrun_penalty": 800,      # штраф за серию длиннее N (pref=prefer_N)
@@ -63,6 +67,8 @@ DEFAULT_WEIGHTS: dict[str, int] = {
     "dow_avoid": 25,             # база: избегание по дню недели
     "desired_date": 20,          # база: желаемая дата
     "soft_unavailable": 200,     # штраф за работу в «мягко нежелательный» день
+    "pt_soft_unavailable": 8000, # то же для ПОЛСТАВОЧНИКОВ — почти абсолютный приоритет
+    "pt_desired_date": 600,      # желаемый день полставочника — сильно (но не раздувая часы)
     "avoid_with": 300,           # штраф за совместную смену с нежелательным коллегой
     "prefer_with": 40,           # награда за совместную смену с желаемым коллегой
     "same_post_repeat": 40,      # штраф за один и тот же аппарат два дня подряд
@@ -525,19 +531,74 @@ class ScheduleSolver:
                             self.model.add(self.xn[e, d, p] + nv <= 1)
 
     def _max_hours(self):
+        """Жёсткий потолок часов = АВАРИЙНЫЙ потолок (maxRate + буфер, ≤ 2.0).
+
+        Желаемый потолок (maxRate) теперь мягкий: выход за него штрафуется в
+        `_hour_target_penalty` (зона «аварийной переработки»), но физически
+        разрешён до аварийного потолка. Это позволяет солверу закрыть месяц,
+        когда суммарный спрос превышает сумму желаемых потолков, вместо отказа.
+        Если аварийный потолок не передан — поведение прежнее (=maxRate).
+        """
         for e, emp in enumerate(self.employees):
             terms = self._hour_terms(e)
             if not terms:
                 continue
-            cap = int(self.config.employee_max_hours.get(
+            soft = int(self.config.employee_max_hours.get(
                 emp.name, self.config.norm_hours * emp.max_rate))
+            cap = int(self.config.employee_hard_max_hours.get(emp.name, soft))
+            cap = max(cap, soft)
             self.model.add(sum(terms) <= cap)
 
     # ------------------------------------------------------------------
     #  Мягкие ограничения
     # ------------------------------------------------------------------
 
+    def _emergency_reluctance(self, emp) -> int:
+        """Коэффициент «неохоты» давать человеку аварийную переработку.
+
+        Меньше → переработка дешевле → достаётся в первую очередь.
+        Логика (по просьбе составителя):
+          • выше выставленный потолок maxRate (1.25/1.5/2.0) → человек заранее
+            согласился на бóльшую нагрузку → меньше неохота;
+          • меньше стажа → меньше неохота (молодым достаётся больше);
+          • потолок впритык к цели (человек сам себя ограничил, запаса нет) →
+            большая неохота (трогаем в последнюю очередь).
+        """
+        max_rate = float(getattr(emp, "max_rate", 1.0))
+        target_rate = float(getattr(emp, "target_rate", getattr(emp, "rate", 1.0)))
+        rate = float(getattr(emp, "rate", 1.0))
+        R = 5
+        R -= int(round((max_rate - 1.0) * 4))                       # 1.5→−2, 2.0→−4
+        R += int(getattr(emp, "seniority_score", 0)) // 15          # 0..4
+        if (max_rate - target_rate) <= 0.001:
+            R += 3
+        if rate <= 0.5:                                             # полставочников — в последнюю очередь
+            R += 4
+        return max(1, R)
+
     def _hour_target_penalty(self):
+        """Отклонение часов от цели + честное распределение переработки.
+
+        Зоны выше цели:
+          target → soft_cap (желаемый потолок maxRate): дешёвый `over_hours`
+            («потолок позволяет» — солвер заполняет это первым у тех, у кого
+            есть запас).
+          soft_cap → hard_cap (аварийный потолок): дорогая «аварийная»
+            переработка. Внутри — выпуклые тиры по 12 ч (каждый следующий
+            дороже предыдущего → лишние смены равномерно размазываются), всё
+            помножено на персональный коэффициент неохоты.
+        `self._overtime_vars` собирает (имя, over, emergency|None) для отчёта.
+        """
+        self._overtime_vars: list[tuple] = []
+        TIER = 12
+        w_under = self.W["under_hours"]
+        w_under_floor = max(self.W.get("under_floor", 0), w_under)
+        w_over = self.W["over_hours"]
+        # Аварийная зона ВСЕГДА дороже желаемой переработки (даже если в
+        # пресете подняли over_hours) — иначе солвер начал бы заходить за
+        # потолок раньше, чем исчерпает дешёвый запас до потолка.
+        w_emerg = max(self.W["over_ceiling"], w_over + 1)
+
         for e, emp in enumerate(self.employees):
             terms = self._hour_terms(e)
             if not terms:
@@ -545,11 +606,62 @@ class ScheduleSolver:
             total = sum(terms)
             target = int(self.config.employee_target_hours.get(
                 emp.name, self.config.norm_hours * emp.rate))
-            over = self.model.new_int_var(0, 500, f"over_{e}")
-            under = self.model.new_int_var(0, 500, f"under_{e}")
+            soft_cap = int(self.config.employee_max_hours.get(
+                emp.name, self.config.norm_hours * emp.max_rate))
+            hard_cap = int(self.config.employee_hard_max_hours.get(
+                emp.name, soft_cap))
+            soft_cap = max(soft_cap, target)
+            hard_cap = max(hard_cap, soft_cap)
+
+            over = self.model.new_int_var(0, max(0, hard_cap - target), f"over_{e}")
+            under = self.model.new_int_var(0, max(0, target), f"under_{e}")
             self.model.add(total - target == over - under)
-            self._penalties.append(self.W["under_hours"] * under)
-            self._penalties.append(self.W["over_hours"] * over)
+            self._penalties.append(w_under * under)
+
+            # Двухуровневый недобор: часы НИЖЕ базовой ставки (floor) штрафуются
+            # дополнительно (почти жёстко) — договорная ставка 0.5/1.0 должна
+            # заполняться точно. Между floor и target — обычный мягкий недобор.
+            floor = int(self.config.employee_floor_hours.get(emp.name, 0))
+            floor = min(max(0, floor), target)
+            if floor > 0 and w_under_floor > w_under:
+                below_floor = self.model.new_int_var(0, floor, f"underfloor_{e}")
+                # below_floor ≥ under − (target − floor) = floor − total (при недоборе)
+                self.model.add(below_floor >= under - (target - floor))
+                self._penalties.append((w_under_floor - w_under) * below_floor)
+
+            desired_room = soft_cap - target
+            emerg_room = hard_cap - soft_cap
+
+            if emerg_room <= 0:
+                # Нет аварийного запаса (потолок уже = цели или = 2.0) — вся
+                # переработка «желаемая», штрафуется дёшево.
+                self._penalties.append(w_over * over)
+                self._overtime_vars.append((emp.name, over, None))
+                continue
+
+            desired_over = self.model.new_int_var(
+                0, max(0, desired_room), f"dover_{e}")
+            emergency = self.model.new_int_var(0, emerg_room, f"emerg_{e}")
+            self.model.add(over == desired_over + emergency)
+            if desired_room > 0:
+                self._penalties.append(w_over * desired_over)
+            else:
+                self.model.add(desired_over == 0)
+
+            R = self._emergency_reluctance(emp)
+            tiers = []
+            filled = 0
+            k = 0
+            while filled < emerg_room:
+                hi = min(TIER, emerg_room - filled)
+                tv = self.model.new_int_var(0, hi, f"emt_{e}_{k}")
+                tiers.append(tv)
+                # стоимость часа в тире k растёт линейно → выпуклый штраф.
+                self._penalties.append(w_emerg * R * (k + 1) * tv)
+                filled += hi
+                k += 1
+            self.model.add(emergency == sum(tiers))
+            self._overtime_vars.append((emp.name, over, emergency))
 
     def _personal_shift_caps(self):
         """Жёсткие личные лимиты на число суточных (с) и ночных (н) за месяц."""
@@ -1043,15 +1155,21 @@ class ScheduleSolver:
         Scaled by seniority_score so senior staff are more likely to get
         the specific dates they ask for.
         """
+        base_pt = self.W.get("pt_desired_date", 0)
         for e, emp in enumerate(self.employees):
             dates = self.desired_dates.get(emp.name, [])
             if not dates:
                 continue
-            senior_bonus = emp.seniority_score // 2
-            base = self.W["desired_date"]
-            if not base:
-                continue
-            bonus = -(base + senior_bonus)
+            if float(getattr(emp, "rate", 1.0)) <= 0.5 and base_pt:
+                # Полставочники: сильный приоритет желаемых дней (без скейла по
+                # стажу). Не выше стоимости лишней смены, чтобы не раздувать часы.
+                bonus = -base_pt
+            else:
+                senior_bonus = emp.seniority_score // 2
+                base = self.W["desired_date"]
+                if not base:
+                    continue
+                bonus = -(base + senior_bonus)
             date_set = set(dates)
             for d in self.config.days:
                 if d not in date_set:
@@ -1064,13 +1182,27 @@ class ScheduleSolver:
         """Штраф за работу в «мягко нежелательный» день (третья градация
         между жёстким «не могу» и «хочу»)."""
         w = self.W["soft_unavailable"]
-        if not w:
+        w_pt = self.W.get("pt_soft_unavailable", 0)
+        if not w and not w_pt:
             return
         for e, emp in enumerate(self.employees):
             days = self.soft_unavailable.get(emp.name, [])
             if not days:
                 continue
+            is_part_time = float(getattr(emp, "rate", 1.0)) <= 0.5
             dayset = set(days)
+            # Полставочники: «нежелательные» дни ЖЁСТКИЕ (по просьбе составителя).
+            # Форма гарантирует, что они оставляют минимум свободных дней под
+            # свою ставку, поэтому жёсткий запрет не ломает заполнение ставки.
+            if is_part_time:
+                for d in self.config.days:
+                    if d not in dayset:
+                        continue
+                    for v in self._all_vars_day(e, d):
+                        self.model.add(v == 0)
+                continue
+            if not w:
+                continue
             for d in self.config.days:
                 if d not in dayset:
                     continue
@@ -1229,6 +1361,23 @@ class ScheduleSolver:
                      f"{self.employees[e].name}(н)", 12)
 
         result = {"schedule": schedule, "employee_hours": employee_hours}
+
+        # Отчёт по переработкам: часы над целью и (отдельно) над желаемым
+        # потолком (аварийная переработка). Нужен составителю, чтобы видеть,
+        # где и насколько вышли за пределы желаемого.
+        overtime: list[dict] = []
+        emergency_total = 0
+        for name, over_var, emerg_var in getattr(self, "_overtime_vars", []):
+            ov = int(solver.value(over_var)) if over_var is not None else 0
+            em = int(solver.value(emerg_var)) if emerg_var is not None else 0
+            emergency_total += em
+            if ov > 0 or em > 0:
+                overtime.append(
+                    {"name": name, "overTarget": ov, "overCeiling": em})
+        overtime.sort(
+            key=lambda r: (-r["overCeiling"], -r["overTarget"], r["name"]))
+        result["overtime"] = overtime
+        result["emergencyOvertimeTotal"] = emergency_total
 
         if self.relax:
             unfilled: list[dict] = []

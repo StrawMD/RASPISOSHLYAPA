@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
+import { clampRates } from "@/lib/rates";
 
 function safeJson<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
@@ -68,10 +69,11 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
-  const rate = body.rate ?? 1.0;
-  const maxRate = body.maxRate ?? 1.5;
-  const rawTarget = body.targetRate ?? rate;
-  const targetRate = Math.min(Math.max(rawTarget, rate), maxRate);
+  const { rate, targetRate, maxRate } = clampRates(
+    body.rate ?? 1.0,
+    body.targetRate ?? body.rate ?? 1.0,
+    body.maxRate ?? 1.5,
+  );
   const employee = await prisma.employee.create({
     data: {
       name: body.name,
@@ -107,10 +109,11 @@ export async function PUT(req: NextRequest) {
   }
 
   const body = await req.json();
-  const rate = body.rate;
-  const maxRate = body.maxRate;
-  const rawTarget = body.targetRate ?? rate;
-  const targetRate = Math.min(Math.max(rawTarget, rate), maxRate);
+  const { rate, targetRate, maxRate } = clampRates(
+    body.rate,
+    body.targetRate ?? body.rate,
+    body.maxRate,
+  );
   const employee = await prisma.employee.update({
     where: { id: body.id },
     data: {

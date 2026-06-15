@@ -20,6 +20,7 @@ export interface SolverInput {
     rate: number;
     allowedPosts: string[];
     maxRate: number;
+    targetRate?: number;
     seniority: number;
     hospitalYears: number;
     careerYears: number;
@@ -41,6 +42,10 @@ export interface SolverInput {
     exclusions?: Record<string, number[]>;
     employeeTargetHours?: Record<string, number>;
     employeeMaxHours?: Record<string, number>;
+    /** Аварийный потолок часов (maxRate + буфер, ≤ 2.0). Жёсткий предел. */
+    employeeHardMaxHours?: Record<string, number>;
+    /** «Пол» базовой ставки (rate × норма × доступность) — заполняется почти жёстко. */
+    employeeFloorHours?: Record<string, number>;
     /** День (строка 1..31) → postId → список ячеек — жёстко заданные смены */
     fixedSlots?: Record<string, Record<string, string[]>>;
   };
@@ -75,6 +80,18 @@ export interface SolverOutput {
   unfilled?: UnfilledSlot[];
   /** Суммарное число незакрытых позиций. */
   unfilledCount?: number;
+  /** Переработки по людям: над целью и (отдельно) над желаемым потолком. */
+  overtime?: OvertimeRow[];
+  /** Суммарная аварийная переработка (часы сверх желаемых потолков). */
+  emergencyOvertimeTotal?: number;
+}
+
+export interface OvertimeRow {
+  name: string;
+  /** Часы сверх целевых. */
+  overTarget: number;
+  /** Часы сверх желаемого потолка (аварийная переработка). */
+  overCeiling: number;
 }
 
 export interface UnfilledSlot {
@@ -143,6 +160,8 @@ export async function runSolver(input: SolverInput): Promise<SolverOutput> {
       relaxed?: boolean;
       unfilled?: UnfilledSlot[];
       unfilledCount?: number;
+      overtime?: OvertimeRow[];
+      emergencyOvertimeTotal?: number;
     };
     if (parsed.error === "fixed_slots" && Array.isArray(parsed.messages)) {
       throw new Error(parsed.messages.join("; "));

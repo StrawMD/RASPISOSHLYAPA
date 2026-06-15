@@ -40,6 +40,7 @@ def main():
             rate=e["rate"],
             allowed_posts=e["allowedPosts"],
             max_rate=e.get("maxRate", 1.5),
+            target_rate=e.get("targetRate", e.get("rate", 1.0)),
             seniority=e.get("seniority", 0),
             hospital_years=e.get("hospitalYears", e.get("seniority", 0) or 0),
             career_years=e.get(
@@ -68,6 +69,8 @@ def main():
         exclusions=cfg.get("exclusions", {}),
         employee_target_hours=cfg.get("employeeTargetHours", {}),
         employee_max_hours=cfg.get("employeeMaxHours", {}),
+        employee_hard_max_hours=cfg.get("employeeHardMaxHours", {}),
+        employee_floor_hours=cfg.get("employeeFloorHours", {}),
         posts=posts,
     )
 
@@ -154,6 +157,8 @@ def main():
     output = {
         "schedule": {str(k): v for k, v in result["schedule"].items()},
         "employeeHours": result["employee_hours"],
+        "overtime": result.get("overtime", []),
+        "emergencyOvertimeTotal": result.get("emergencyOvertimeTotal", 0),
     }
     if result.get("relaxed"):
         output["relaxed"] = True

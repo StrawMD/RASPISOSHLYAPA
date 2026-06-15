@@ -24,6 +24,16 @@ import {
 import { toast } from "sonner";
 import { Clock } from "lucide-react";
 import { useRouter } from "next/navigation";
+import {
+  RATE_OPTIONS,
+  maxRateOptions,
+  targetRateOptions,
+  maxRateCap,
+  clampRates,
+  isPartTime,
+  minFreeWorkDays,
+  round2,
+} from "@/lib/rates";
 
 const MONTH_NAMES = [
   "Январь",
@@ -84,13 +94,6 @@ const PREF_COLOR: Record<string, string> = {
 };
 
 const MODALITIES = ["КТ", "МРТ"] as const;
-const RATE_STEPS = [0.25, 0.5, 0.75, 1.0];
-const TARGET_RATE_STEPS = [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0];
-const MAX_RATE_PRESETS = [1.0, 1.25, 1.5, 1.75, 2.0];
-
-function round2(n: number): number {
-  return Math.round(n * 100) / 100;
-}
 
 type ShiftTimeMode =
   | "only_full"
@@ -193,6 +196,7 @@ interface Props {
     rate: number;
     targetRate: number;
     maxRate: number;
+    seniority?: number;
     modalities: string[];
     can24h: boolean;
     hospitalStartYear: number | null;
@@ -229,6 +233,11 @@ interface Props {
   deadline: string | null;
   monthStatus: string;
   isAdmin?: boolean;
+  /** Админ редактирует анкету ЗА другого сотрудника (профиль пишем в admin-API). */
+  adminOnBehalf?: boolean;
+  /** Полный список постов (вкл. неактивные) — только для расчёта allowedPosts
+   *  при сохранении профиля админом, чтобы не терять неактивные посты. */
+  allPostsForAllowed?: { id: string; modality: string }[];
   existing: {
     pref24hFull: string | null;
     pref24hDay: string | null;
@@ -272,6 +281,8 @@ export function PreferencesForm({
   deadline,
   monthStatus,
   isAdmin = false,
+  adminOnBehalf = false,
+  allPostsForAllowed,
   existing,
 }: Props) {
   const router = useRouter();
@@ -293,7 +304,7 @@ export function PreferencesForm({
   const [targetRate, setTargetRate] = useState(initialTargetRate);
   const [maxRate, setMaxRate] = useState(initialMaxRate);
   const [maxRateCustom, setMaxRateCustom] = useState(
-    !MAX_RATE_PRESETS.includes(round2(initialMaxRate)),
+    !maxRateOptions(initialRate).includes(round2(initialMaxRate)),
   );
   const [modalities, setModalities] = useState<string[]>(employee.modalities);
   const [can24h, setCan24h] = useState(employee.can24h);
@@ -389,6 +400,21 @@ export function PreferencesForm({
   const numDays = getDaysInMonth(year, month);
   const maxConsec = rate >= 1.0 ? 3 : 6;
 
+  // Для полставочников: сколько свободных рабочих дней нужно оставить под их
+  // ставку (чтобы «нежелательными» не закрасить весь месяц).
+  const approxNorm = useMemo(() => {
+    let workdays = 0;
+    for (let d = 1; d <= numDays; d++) {
+      const wd = new Date(year, month - 1, d).getDay();
+      if (wd >= 1 && wd <= 5) workdays++;
+    }
+    return workdays * 6;
+  }, [numDays, year, month]);
+  const partTime = isPartTime(rate);
+  const minFreeDays = partTime ? minFreeWorkDays(targetRate, approxNorm) : 0;
+  const freeForWork = numDays - unavailable.size - softUnavailable.size;
+  const softAddBlocked = partTime && freeForWork <= minFreeDays;
+
   const firstDow = (new Date(year, month - 1, 1).getDay() + 6) % 7;
   const cells: (number | null)[] = [];
   for (let i = 0; i < firstDow; i++) cells.push(null);
@@ -420,25 +446,25 @@ export function PreferencesForm({
 
   function changeRate(next: number) {
     if (readOnly) return;
-    setRate(next);
-    const nextMax = Math.max(maxRate, next);
-    setMaxRate(nextMax);
-    setTargetRate((t) => Math.min(Math.max(t, next), nextMax));
+    const c = clampRates(next, targetRate, maxRate);
+    setRate(c.rate);
+    setMaxRate(c.maxRate);
+    setTargetRate(c.targetRate);
+    setMaxRateCustom(!maxRateOptions(c.rate).includes(c.maxRate));
   }
 
   function changeTargetRate(next: number) {
     if (readOnly) return;
     if (Number.isNaN(next)) return;
-    const clamped = Math.min(Math.max(next, rate), maxRate);
-    setTargetRate(clamped);
+    setTargetRate(clampRates(rate, next, maxRate).targetRate);
   }
 
   function changeMaxRate(next: number) {
     if (readOnly) return;
     if (Number.isNaN(next)) return;
-    const clamped = round2(Math.min(2.0, Math.max(next, rate)));
-    setMaxRate(clamped);
-    setTargetRate((t) => Math.min(Math.max(t, rate), clamped));
+    const c = clampRates(rate, targetRate, next);
+    setMaxRate(c.maxRate);
+    setTargetRate(c.targetRate);
   }
 
   function removeFrom(
@@ -474,11 +500,25 @@ export function PreferencesForm({
       const next = new Set(prev);
       if (next.has(day)) {
         next.delete(day);
-      } else {
-        next.add(day);
-        removeFrom(setDesired, day);
-        removeFrom(setUnavailable, day);
+        return next;
       }
+      // Полставочники могут отмечать сколько угодно «нежелательных», но должны
+      // оставить минимум свободных дней под свою ставку — иначе график
+      // не наберёт целевые часы и весь месяц окажется закрашен.
+      if (partTime) {
+        const free = numDays - unavailable.size - (prev.size + 1);
+        if (free < minFreeDays) {
+          toast.warning(
+            `Оставьте минимум ${minFreeDays} свободных дней под ставку ${round2(
+              targetRate,
+            )} — иначе график не наберёт ваши часы. Больше отмечать нельзя.`,
+          );
+          return prev;
+        }
+      }
+      next.add(day);
+      removeFrom(setDesired, day);
+      removeFrom(setUnavailable, day);
       return next;
     });
   }
@@ -616,23 +656,51 @@ export function PreferencesForm({
         return;
       }
 
-      const profileRes = await fetch("/api/employees/me", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          rate,
-          targetRate,
-          maxRate,
-          modalities,
-          can24h,
-          hospitalStartYear: hospitalParsed,
-          careerStartYear: careerParsed,
-          consecutivePref,
-          medicalRestriction,
-          medicalNote: medicalNote.trim() || null,
-          recurringUnavailableDows: Array.from(recurringDows).sort((a, b) => a - b),
-        }),
-      });
+      const recurringDowsArr = Array.from(recurringDows).sort((a, b) => a - b);
+      // Когда админ правит анкету за другого сотрудника, профиль нельзя писать
+      // в /api/employees/me (это профиль самого админа). Пишем через admin-API
+      // полным объектом сотрудника; allowedPosts выводим из модальностей.
+      const profileRes = adminOnBehalf
+        ? await fetch("/api/admin/employees", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              id: employeeId,
+              name: employeeName,
+              rate,
+              targetRate,
+              maxRate,
+              seniority: employee.seniority ?? 0,
+              hospitalStartYear: hospitalParsed,
+              careerStartYear: careerParsed,
+              modalities,
+              allowedPosts: (allPostsForAllowed ?? posts)
+                .filter((p) => p.modality && modalities.includes(p.modality))
+                .map((p) => p.id),
+              can24h,
+              consecutivePref,
+              medicalRestriction,
+              medicalNote: medicalNote.trim() || null,
+              recurringUnavailableDows: recurringDowsArr,
+            }),
+          })
+        : await fetch("/api/employees/me", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              rate,
+              targetRate,
+              maxRate,
+              modalities,
+              can24h,
+              hospitalStartYear: hospitalParsed,
+              careerStartYear: careerParsed,
+              consecutivePref,
+              medicalRestriction,
+              medicalNote: medicalNote.trim() || null,
+              recurringUnavailableDows: recurringDowsArr,
+            }),
+          });
 
       if (!profileRes.ok) {
         const data = await profileRes.json().catch(() => null);
@@ -716,10 +784,23 @@ export function PreferencesForm({
   return (
     <div className="space-y-5 max-w-2xl">
       <div>
+        {adminOnBehalf && (
+          <a
+            href="/admin/employees"
+            className="text-sm text-muted-foreground hover:underline"
+          >
+            ← К сотрудникам
+          </a>
+        )}
         <h1 className="text-xl font-semibold">Предпочтения</h1>
         <p className="text-sm text-muted-foreground">
           {employeeName} — на {MONTH_NAMES[month - 1]} {year}
         </p>
+        {adminOnBehalf && (
+          <Badge variant="outline" className="mt-1">
+            Режим администратора: правка анкеты за сотрудника
+          </Badge>
+        )}
         {deadlineDate && (
           <div className="flex items-center gap-1.5 mt-2 text-sm">
             <Clock className="h-4 w-4" />
@@ -810,7 +891,7 @@ export function PreferencesForm({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {RATE_STEPS.map((r) => (
+                  {RATE_OPTIONS.map((r) => (
                     <SelectItem key={r} value={String(r)}>
                       {r}
                     </SelectItem>
@@ -832,9 +913,7 @@ export function PreferencesForm({
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {TARGET_RATE_STEPS.filter(
-                    (r) => r >= rate && r <= maxRate,
-                  ).map((r) => (
+                  {targetRateOptions(rate, maxRate).map((r) => (
                     <SelectItem key={r} value={String(r)}>
                       {r}
                     </SelectItem>
@@ -868,7 +947,7 @@ export function PreferencesForm({
                   </SelectValue>
                 </SelectTrigger>
                 <SelectContent>
-                  {MAX_RATE_PRESETS.map((r) => (
+                  {maxRateOptions(rate).map((r) => (
                     <SelectItem key={r} value={String(r)}>
                       {r}
                     </SelectItem>
@@ -881,7 +960,7 @@ export function PreferencesForm({
                   type="number"
                   step={0.05}
                   min={rate}
-                  max={2.0}
+                  max={maxRateCap(rate)}
                   value={maxRate}
                   onChange={(e) => changeMaxRate(parseFloat(e.target.value))}
                   onBlur={(e) => {
@@ -889,11 +968,13 @@ export function PreferencesForm({
                     if (!Number.isNaN(n)) changeMaxRate(n);
                   }}
                   disabled={readOnly}
-                  placeholder="до 2.00"
+                  placeholder={`до ${maxRateCap(rate)}`}
                 />
               )}
               <p className="text-[11px] text-muted-foreground">
-                Абсолютный потолок переработки. Максимум 2.0.
+                {isPartTime(rate)
+                  ? "Потолок переработки для полставки — максимум 0.75."
+                  : "Абсолютный потолок переработки. Максимум 2.0."}
               </p>
             </div>
           </div>
@@ -1536,6 +1617,20 @@ export function PreferencesForm({
             В отличие от «не могу» — это не запрет: солвер постарается не ставить
             смену, но может, если иначе график не сходится. Отмечено:{" "}
             {softUnavailable.size}
+            {partTime && (
+              <>
+                {" "}
+                · для полставки эти дни очень приоритетны. Свободно под ставку:{" "}
+                <strong>{Math.max(0, freeForWork)}</strong> дн. (минимум{" "}
+                {minFreeDays})
+                {softAddBlocked && (
+                  <span className="text-amber-600">
+                    {" "}
+                    — достигнут лимит, снимите другой день, чтобы отметить новый.
+                  </span>
+                )}
+              </>
+            )}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -1553,22 +1648,25 @@ export function PreferencesForm({
               const isHard = unavailable.has(day);
               const isDes = desired.has(day);
               const blocked = isHard || isDes;
+              const limitBlocked = softAddBlocked && !isSoft && !blocked;
               return (
                 <button
                   key={day}
                   onClick={() => toggleSoftUnavailable(day)}
-                  disabled={readOnly || blocked}
+                  disabled={readOnly || blocked || limitBlocked}
                   title={
                     isHard
                       ? "День помечен как «не могу»"
                       : isDes
                         ? "День помечен как желаемый"
-                        : undefined
+                        : limitBlocked
+                          ? `Оставьте минимум ${minFreeDays} свободных дней под вашу ставку`
+                          : undefined
                   }
                   className={`h-8 rounded text-xs font-medium transition-colors ${
                     isSoft
                       ? "bg-amber-500/30 text-amber-300 ring-1 ring-amber-500/50"
-                      : blocked
+                      : blocked || limitBlocked
                         ? "bg-muted/20 text-muted-foreground/40 cursor-not-allowed"
                         : "bg-muted/30 hover:bg-muted"
                   } ${readOnly ? "cursor-default" : ""}`}

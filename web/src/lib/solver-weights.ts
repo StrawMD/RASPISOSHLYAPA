@@ -8,7 +8,9 @@
 
 export const DEFAULT_WEIGHTS: Record<string, number> = {
   under_hours: 500,
+  under_floor: 6000,
   over_hours: 90,
+  over_ceiling: 300,
   consec_avoid: 1000,
   block_reward: 150,
   overrun_penalty: 800,
@@ -28,6 +30,8 @@ export const DEFAULT_WEIGHTS: Record<string, number> = {
   dow_avoid: 25,
   desired_date: 20,
   soft_unavailable: 200,
+  pt_soft_unavailable: 8000,
+  pt_desired_date: 600,
   avoid_with: 300,
   prefer_with: 40,
   same_post_repeat: 40,
@@ -57,8 +61,10 @@ export const WEIGHT_GROUPS: WeightGroup[] = [
     description:
       "Самые «тяжёлые» факторы — обычно перевешивают личные пожелания.",
     weights: [
-      { key: "under_hours", label: "Недобор часов (за час)", hint: "Насколько важно догрузить человека до целевых часов.", max: 1500, toggleable: false },
-      { key: "over_hours", label: "Переработка (за час)", hint: "Насколько важно не перегружать сверх цели.", max: 1500, toggleable: false },
+      { key: "under_hours", label: "Недобор часов до цели (за час)", hint: "Насколько важно догрузить человека от базовой ставки до целевых часов.", max: 1500, toggleable: false },
+      { key: "under_floor", label: "Недобор НИЖЕ базовой ставки (за час)", hint: "Почти жёсткий штраф за недозаполнение договорной ставки (0.5/1.0). Гарантирует, что ставка заполняется точно, прежде чем кого-то перегружать.", max: 20000, toggleable: false },
+      { key: "over_hours", label: "Переработка в пределах потолка (за час)", hint: "Цена часа переработки между целью и желаемым потолком (maxRate). Дёшево = «потолок позволяет».", max: 1500, toggleable: false },
+      { key: "over_ceiling", label: "Аварийная переработка сверх потолка (за час)", hint: "База штрафа за часы СВЕРХ желаемого потолка, когда иначе месяц не закрыть. Растёт выпукло и сильнее у тех, кто старше/ограничил себя потолком — лишние смены честно достаются молодым и тем, у кого есть запас.", max: 2000, toggleable: false },
       { key: "weekend_fairness", label: "Равномерность выходных", hint: "Чтобы выходные/праздники делились поровну между людьми.", max: 300, toggleable: true },
     ],
   },
@@ -99,6 +105,8 @@ export const WEIGHT_GROUPS: WeightGroup[] = [
       { key: "dow_avoid", label: "Избегание дня недели", hint: "", max: 300, toggleable: true },
       { key: "desired_date", label: "Желаемая дата", hint: "", max: 300, toggleable: true },
       { key: "soft_unavailable", label: "Мягко нежелательный день", hint: "Штраф за работу в день «лучше не ставить».", max: 1000, toggleable: true },
+      { key: "pt_soft_unavailable", label: "Полставка: нежелательный день (жёстко)", hint: "Для полставочников (0.5) дни «лучше не ставить» трактуются ЖЁСТКО (как «не могу»). Форма гарантирует, что они оставляют минимум свободных дней под ставку. Этот вес-заглушка оставлен для совместимости; фактически работает как запрет.", max: 30000, toggleable: true },
+      { key: "pt_desired_date", label: "Полставка: желаемый день", hint: "Сильный приоритет желаемых дней для полставочников (выбор дня, без раздувания часов).", max: 3000, toggleable: true },
       { key: "avoid_with", label: "Не ставить с коллегой", hint: "В одном кабинете (на одном посту) в один день.", max: 1000, toggleable: true },
       { key: "prefer_with", label: "Хочу работать с коллегой", hint: "В одном кабинете (на одном посту) в один день.", max: 400, toggleable: true },
       { key: "same_post_repeat", label: "Тот же аппарат два дня подряд", hint: "Сила штрафа за повтор аппарата в соседние дни. Применяется только к тем, кто сам отметил это пожелание.", max: 400, toggleable: true },

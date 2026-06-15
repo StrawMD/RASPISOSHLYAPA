@@ -26,13 +26,30 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json();
   const {
-    employeeId, year, month,
-    pref24hFull, pref24hDay, pref24hNight, shiftTimeMode,
-    postPreferences, unavailableDays, weekdayPref, weekendPref,
-    dayOfWeekPrefs, desiredDates, comment,
-    softUnavailableDays, loadPref, maxNights, maxFull, minShifts,
-    avoidWith, preferWith, avoidSamePost,
-    postShiftPrefs, dowShiftAvoid,
+    employeeId,
+    year,
+    month,
+    pref24hFull,
+    pref24hDay,
+    pref24hNight,
+    shiftTimeMode,
+    postPreferences,
+    unavailableDays,
+    weekdayPref,
+    weekendPref,
+    dayOfWeekPrefs,
+    desiredDates,
+    comment,
+    softUnavailableDays,
+    loadPref,
+    maxNights,
+    maxFull,
+    minShifts,
+    avoidWith,
+    preferWith,
+    avoidSamePost,
+    postShiftPrefs,
+    dowShiftAvoid,
   } = body;
 
   const normAvoidSamePost = Boolean(avoidSamePost);
@@ -53,11 +70,14 @@ export async function POST(req: NextRequest) {
     "avoid",
     "avoid_hard",
   ]);
-  function normPostShiftPrefs(v: unknown): Record<string, Record<string, string>> {
+  function normPostShiftPrefs(
+    v: unknown,
+  ): Record<string, Record<string, string>> {
     const out: Record<string, Record<string, string>> = {};
     if (!v || typeof v !== "object") return out;
     for (const [postId, raw] of Object.entries(v as Record<string, unknown>)) {
-      if (typeof postId !== "string" || !raw || typeof raw !== "object") continue;
+      if (typeof postId !== "string" || !raw || typeof raw !== "object")
+        continue;
       const inner: Record<string, string> = {};
       for (const kind of ["full", "day", "night"] as const) {
         const lvl = (raw as Record<string, unknown>)[kind];
@@ -72,7 +92,9 @@ export async function POST(req: NextRequest) {
 
   // {dow("1".."7"): {full?|night?|day?: true}} — не ставить тип смены в этот
   // день недели. Только флаги === true, только валидные дни недели.
-  function normDowShiftAvoid(v: unknown): Record<string, Record<string, boolean>> {
+  function normDowShiftAvoid(
+    v: unknown,
+  ): Record<string, Record<string, boolean>> {
     const out: Record<string, Record<string, boolean>> = {};
     if (!v || typeof v !== "object") return out;
     for (const [dow, raw] of Object.entries(v as Record<string, unknown>)) {
@@ -95,7 +117,9 @@ export async function POST(req: NextRequest) {
 
   const ALLOWED_LOAD = new Set(["less", "normal", "more"]);
   const normalizedLoadPref =
-    typeof loadPref === "string" && ALLOWED_LOAD.has(loadPref) && loadPref !== "normal"
+    typeof loadPref === "string" &&
+    ALLOWED_LOAD.has(loadPref) &&
+    loadPref !== "normal"
       ? loadPref
       : null;
 
@@ -109,14 +133,17 @@ export async function POST(req: NextRequest) {
     if (!Array.isArray(v)) return [];
     return Array.from(
       new Set(
-        v.filter((x): x is string => typeof x === "string" && x.trim().length > 0),
+        v.filter(
+          (x): x is string => typeof x === "string" && x.trim().length > 0,
+        ),
       ),
     );
   }
 
   const normSoftDays: number[] = Array.isArray(softUnavailableDays)
     ? softUnavailableDays.filter(
-        (d: unknown) => Number.isInteger(d) && (d as number) >= 1 && (d as number) <= 31,
+        (d: unknown) =>
+          Number.isInteger(d) && (d as number) >= 1 && (d as number) <= 31,
       )
     : [];
   const normAvoidWith = toNameArray(avoidWith);
@@ -169,13 +196,18 @@ export async function POST(req: NextRequest) {
 
   let needsApproval = false;
   if (!isAdmin && unavail.length > 0) {
-    const employee = await prisma.employee.findUnique({ where: { id: employeeId } });
+    const employee = await prisma.employee.findUnique({
+      where: { id: employeeId },
+    });
     if (employee) {
       const limit = employee.rate >= 1.0 ? 3 : 6;
       if (consecutive > limit) {
-        return NextResponse.json({
-          error: `Максимум ${limit} дней подряд. У вас ${consecutive}.`,
-        }, { status: 400 });
+        return NextResponse.json(
+          {
+            error: `Максимум ${limit} дней подряд. У вас ${consecutive}.`,
+          },
+          { status: 400 },
+        );
       }
       if (employee.rate >= 1.0 && consecutive > 3) {
         needsApproval = true;

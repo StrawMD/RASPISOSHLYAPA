@@ -39,6 +39,8 @@ export default function GeneratePage() {
     relaxed?: boolean;
     unfilled?: { post: string; day: number; kind: string; count: number }[];
     unfilledCount?: number;
+    overtime?: { name: string; overTarget: number; overCeiling: number }[];
+    emergencyOvertimeTotal?: number;
   } | null>(null);
   const [diagnostics, setDiagnostics] = useState<string[] | null>(null);
 
@@ -81,11 +83,17 @@ export default function GeneratePage() {
         relaxed: data.relaxed,
         unfilled: data.unfilled,
         unfilledCount: data.unfilledCount,
+        overtime: data.overtime,
+        emergencyOvertimeTotal: data.emergencyOvertimeTotal,
       });
       const fs = typeof data.fixedSlotsApplied === "number" ? data.fixedSlotsApplied : 0;
       if (data.relaxed) {
         toast.success(
           `Черновик с пропусками v${data.versionNumber}: незакрытых позиций — ${data.unfilledCount ?? 0}. Список ниже.`,
+        );
+      } else if (data.emergencyOvertimeTotal > 0) {
+        toast.success(
+          `Версия ${data.versionNumber}: месяц закрыт с аварийной переработкой — ${data.emergencyOvertimeTotal}ч сверх желаемых потолков. Разбивка ниже.`,
         );
       } else {
         toast.success(
@@ -300,6 +308,36 @@ export default function GeneratePage() {
                   </ul>
                 </div>
               )}
+
+            {(result.emergencyOvertimeTotal ?? 0) > 0 && (
+              <div className="mb-3 rounded border border-orange-300 bg-orange-50/60 dark:bg-orange-950/20 p-3">
+                <p className="text-sm font-medium mb-1.5 text-orange-700 dark:text-orange-400">
+                  Аварийная переработка сверх желаемых потолков:{" "}
+                  {result.emergencyOvertimeTotal}ч
+                </p>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Спрос не закрывался в пределах желаемых потолков, поэтому часть
+                  людей выведена выше maxRate (но не выше 2.0 ставки). Распределено
+                  пропорционально: больше — тем, у кого есть запас по потолку и
+                  меньше стаж.
+                </p>
+                <ul className="space-y-0.5 text-sm">
+                  {(result.overtime ?? [])
+                    .filter((o) => o.overCeiling > 0)
+                    .map((o, i) => (
+                      <li key={i} className="flex justify-between gap-3">
+                        <span>{o.name}</span>
+                        <span className="text-orange-600 dark:text-orange-400 font-medium tabular-nums">
+                          +{o.overCeiling}ч сверх потолка
+                          {o.overTarget > o.overCeiling
+                            ? ` (всего +${o.overTarget}ч к цели)`
+                            : ""}
+                        </span>
+                      </li>
+                    ))}
+                </ul>
+              </div>
+            )}
             <p className="text-sm text-muted-foreground mb-2">
               Это <strong>черновик</strong> — на странице «Расписание» для
               сотрудников по-прежнему показывается только{" "}
