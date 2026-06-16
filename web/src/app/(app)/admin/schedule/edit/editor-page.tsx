@@ -104,6 +104,12 @@ const VIOLATION_CLASS =
 const FIXED_CLASS =
   "bg-sky-500/25 text-sky-900 dark:text-sky-100 border-sky-500/60";
 
+// Режим «выделить сотрудника»: выбранный — ярко-жёлтый, остальные приглушены.
+const HIGHLIGHT_ON_CLASS =
+  "bg-yellow-300 text-black border-yellow-500 font-semibold ring-1 ring-yellow-500";
+const HIGHLIGHT_OFF_CLASS =
+  "bg-transparent text-muted-foreground/70 border-transparent";
+
 const LEVEL_CLASSES: Record<HourStat["level"], string> = {
   green:
     "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/40",
@@ -144,6 +150,10 @@ export function ScheduleEditPage() {
   const [version, setVersion] = useState<VersionInfo | null>(null);
   const [schedule, setSchedule] = useState<Schedule>({});
   const [fixedSlots, setFixedSlots] = useState<Schedule>({});
+  // Режим «выделить сотрудника»: пустая строка = выкл. Когда включён —
+  // компактный вид, фамилии мельче и без подсветки часов, ярко горит только
+  // выбранный сотрудник (быстро видно его график по месяцу).
+  const [highlightName, setHighlightName] = useState<string>("");
   const [employeeHours, setEmployeeHours] = useState<Record<string, number>>({});
   const [posts, setPosts] = useState<Post[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -323,6 +333,7 @@ export function ScheduleEditPage() {
     ),
   );
   const fixedKeys = compliance?.fixedKeys ?? new Set<string>();
+  const highlightMode = highlightName !== "";
 
   function cellHole(day: number, postId: string): number {
     const target = cellTargets[`${day}:${postId}`];
@@ -361,7 +372,33 @@ export function ScheduleEditPage() {
             Нажмите на ячейку для редактирования
           </p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center flex-wrap">
+          <div className="flex items-center gap-1">
+            <select
+              value={highlightName}
+              onChange={(e) => setHighlightName(e.target.value)}
+              className={`h-8 rounded-md border bg-background px-2 text-sm ${highlightName ? "border-yellow-500 ring-1 ring-yellow-400" : "border-input"}`}
+              title="Выделить сотрудника: компактный вид, горит только выбранный"
+            >
+              <option value="">Выделить сотрудника…</option>
+              {employees.map((e) => (
+                <option key={e.id} value={e.name}>
+                  {e.name}
+                </option>
+              ))}
+            </select>
+            {highlightName && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 px-2"
+                onClick={() => setHighlightName("")}
+                title="Выключить выделение"
+              >
+                <X className="h-3.5 w-3.5" />
+              </Button>
+            )}
+          </div>
           <Badge variant={version.status === "published" ? "default" : "outline"}>
             {version.status === "published" ? "Опубликован" : version.status === "archived" ? "Архив" : "Черновик"}
           </Badge>
@@ -468,13 +505,13 @@ export function ScheduleEditPage() {
                     return (
                       <td
                         key={p.id}
-                        className={`border px-1 py-0.5 ${
+                        className={`border ${highlightMode ? "px-0.5 py-px" : "px-1 py-0.5"} ${
                           hole > 0
                             ? "outline outline-2 -outline-offset-2 outline-amber-400 bg-amber-50/60 dark:bg-amber-950/30"
                             : ""
                         }`}
                       >
-                        <div className="flex flex-wrap gap-0.5 items-center min-h-[1.5rem]">
+                        <div className={`flex flex-wrap items-center ${highlightMode ? "gap-px min-h-[1rem]" : "gap-0.5 min-h-[1.5rem]"}`}>
                           {hole > 0 && (
                             <span
                               className="inline-flex items-center rounded bg-amber-500 text-white px-1 py-px text-[10px] font-semibold leading-none"
@@ -493,15 +530,22 @@ export function ScheduleEditPage() {
                             const violation = isFixed
                               ? undefined
                               : violationReasonByKey.get(`${d}:${p.id}:${person}`);
-                            const cellClass = violation
-                              ? VIOLATION_CLASS
-                              : isFixed
-                                ? FIXED_CLASS
-                                : LEVEL_CLASSES[personStat.level];
+                            const isHi = highlightMode && baseName === highlightName;
+                            // В режиме выделения цвета часов/нарушений приглушаем,
+                            // ярко горит только выбранный сотрудник.
+                            const cellClass = highlightMode
+                              ? isHi
+                                ? HIGHLIGHT_ON_CLASS
+                                : HIGHLIGHT_OFF_CLASS
+                              : violation
+                                ? VIOLATION_CLASS
+                                : isFixed
+                                  ? FIXED_CLASS
+                                  : LEVEL_CLASSES[personStat.level];
                             return (
                               <Popover key={idx}>
                                 <PopoverTrigger
-                                  className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs hover:opacity-80 transition-opacity border ${cellClass}`}
+                                  className={`inline-flex items-center gap-0.5 rounded border transition-opacity hover:opacity-80 ${highlightMode ? "px-1 py-px text-[10px] leading-tight" : "px-1.5 py-0.5 text-xs"} ${cellClass}`}
                                   title={
                                     violation
                                       ? `⚠ Жёсткое ограничение: ${violation}`
@@ -510,14 +554,18 @@ export function ScheduleEditPage() {
                                         : `Всего: ${Math.round(personStat.hours)}ч · По ставке: ${Math.round(personStat.target)}ч · Потолок: ${Math.round(personStat.cap)}ч`
                                   }
                                 >
-                                  {violation && <span className="mr-0.5">⚠</span>}
-                                  {!violation && isFixed && (
+                                  {!highlightMode && violation && (
+                                    <span className="mr-0.5">⚠</span>
+                                  )}
+                                  {!highlightMode && !violation && isFixed && (
                                     <span className="mr-0.5">🔒</span>
                                   )}
                                   {person}
-                                  <span className="opacity-70 text-[10px]">
-                                    · {Math.round(personStat.hours)}ч
-                                  </span>
+                                  {!highlightMode && (
+                                    <span className="opacity-70 text-[10px]">
+                                      · {Math.round(personStat.hours)}ч
+                                    </span>
+                                  )}
                                 </PopoverTrigger>
                                 <PopoverContent
                                   className="w-72 p-2 max-h-[60vh] overflow-y-auto overscroll-contain"
