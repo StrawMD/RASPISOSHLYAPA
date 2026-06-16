@@ -51,6 +51,7 @@ DEFAULT_WEIGHTS: dict[str, int] = {
     "consec_avoid": 1000,        # штраф за пару смен подряд (pref=avoid)
     "block_reward": 150,         # награда за смежность смен (pref=prefer_N)
     "overrun_penalty": 800,      # штраф за серию длиннее N (pref=prefer_N)
+    "consec3_soft": 5000,        # штраф за 3-й день подряд (норма ≤2; 3 — крайний случай)
     "rest2": 80,                 # желателен 2-й день отдыха после суток/ночи
     "full_reward": 500,          # награда за монолитные сутки (с)
     "partial_penalty": 200,      # штраф за дробление суток на (д)+(н)
@@ -316,6 +317,9 @@ class ScheduleSolver:
                         continue
                     fixed_force.setdefault((_ei, _d, _pi), set()).add(_kind)
                     fixed_days_by_emp.setdefault(_ei, set()).add(_d)
+        # Доступно ограничению очерёдности: окна, задевающие фикс-дни, не
+        # ограничиваем жёстко (фикс важнее, иначе месяц станет нерешаемым).
+        self._fixed_days_by_emp = fixed_days_by_emp
 
         # Жёсткий потолок часов обязан вмещать зафиксированные часы. У людей с
         # большим отпуском avail-потолок занижен, но раз админ зафиксировал их
@@ -898,32 +902,76 @@ class ScheduleSolver:
                     self._penalties.append(w * both)
 
     def _consecutive_sequencing(self):
-        """Персональная очерёдность смен.
+        """Персональная очерёдность смен + ЖЁСТКИЙ потолок дней подряд.
 
           avoid (по умолчанию) — штраф за любые две смены подряд.
-          neutral             — без штрафа.
-          prefer_N (N=2..4)   — поощряем серии до N смен подряд, штрафуем
+          neutral             — пар не штрафуем, но действует общий потолок.
+          prefer_N (N=2..6)   — поощряем серии до N смен подряд, штрафуем
                                  серии длиннее N.
 
+        Общее правило (политика «не более двух дней подряд; три — только в
+        крайнем случае»): для всех, у кого НЕТ предпочтения серий ≥3
+        (avoid/neutral/prefer_2), ставим ЖЁСТКИЙ потолок 3 дня подряд и
+        мягко штрафуем сам факт 3-го дня (так нормой остаётся ≤2, а 3 берётся
+        лишь когда иначе слот не закрыть). У кого предпочтение длиннее
+        (prefer_3/prefer_4/…) — уважаем его: жёсткий потолок = N, без штрафа
+        за 3-й день.
+
         Замечание: жёсткий отдых после суток (с) и ночи (н) сохраняется
-        всегда, поэтому очерёдность реально влияет на дневные 12ч-смены.
+        всегда; этот потолок дополнительно ограничивает серии дневных 12ч-смен.
         """
         days = self.config.days
+        fixed_days_by_emp = getattr(self, "_fixed_days_by_emp", {})
+
+        def worked_window(e, start, length):
+            vs = [self._worked_var(e, days[start + k]) for k in range(length)]
+            return None if any(v is None for v in vs) else vs
+
+        def window_has_fixed(e, start, length):
+            fd = fixed_days_by_emp.get(e)
+            if not fd:
+                return False
+            return any(days[start + k] in fd for k in range(length))
+
         for e, emp in enumerate(self.employees):
             pref = getattr(emp, "consecutive_pref", "avoid") or "avoid"
 
-            if pref == "neutral":
-                continue
-
+            # Длина серии, которую сотрудник осознанно предпочитает (prefer_N).
+            pref_n = 0
             if pref.startswith("prefer_"):
                 try:
-                    n = int(pref.split("_", 1)[1])
+                    pref_n = int(pref.split("_", 1)[1])
                 except (IndexError, ValueError):
-                    n = 2
-                n = max(2, min(n, 6))
+                    pref_n = 2
+                pref_n = max(2, min(pref_n, 6))
+
+            # ЖЁСТКИЙ потолок дней подряд: уважаем явное предпочтение длиннее 3,
+            # иначе — общий потолок 3 (норма ≤2, третий день дорогой).
+            hard_cap = max(3, pref_n) if pref_n >= 3 else 3
+            for i in range(len(days) - hard_cap):
+                if window_has_fixed(e, i, hard_cap + 1):
+                    continue
+                window = worked_window(e, i, hard_cap + 1)
+                if window is None:
+                    continue
+                self.model.add(sum(window) <= hard_cap)
+
+            # Мягкий штраф за 3-й день подряд — только для тех, кто НЕ просил
+            # серии ≥3 (норма «не более двух»).
+            if pref_n < 3:
+                w3 = self.W.get("consec3_soft", 0)
+                if w3:
+                    for i in range(len(days) - 2):
+                        window = worked_window(e, i, 3)
+                        if window is None:
+                            continue
+                        over3 = self.model.new_bool_var(f"c3_{e}_{days[i]}")
+                        self.model.add_min_equality(over3, window)
+                        self._penalties.append(w3 * over3)
+
+            if pref_n >= 2:  # prefer_N: поощряем серии до N, штрафуем длиннее N
                 block_reward = self.W["block_reward"]
                 overrun = self.W["overrun_penalty"]
-
                 if block_reward:
                     for i in range(len(days) - 1):
                         a = self._worked_var(e, days[i])
@@ -933,28 +981,26 @@ class ScheduleSolver:
                         both = self.model.new_bool_var(f"adj_{e}_{days[i]}")
                         self.model.add_min_equality(both, [a, b])
                         self._penalties.append(-block_reward * both)
-
                 if overrun:
-                    for i in range(len(days) - n):
-                        window = [self._worked_var(e, days[i + k])
-                                  for k in range(n + 1)]
-                        if any(v is None for v in window):
+                    for i in range(len(days) - pref_n):
+                        window = worked_window(e, i, pref_n + 1)
+                        if window is None:
                             continue
                         over = self.model.new_bool_var(f"over_{e}_{days[i]}")
                         self.model.add_min_equality(over, window)
                         self._penalties.append(overrun * over)
-            else:  # avoid
+            elif pref == "avoid":  # штраф за любую пару подряд
                 w = self.W["consec_avoid"]
-                if not w:
-                    continue
-                for i in range(len(days) - 1):
-                    a = self._worked_var(e, days[i])
-                    b = self._worked_var(e, days[i + 1])
-                    if a is None or b is None:
-                        continue
-                    c = self.model.new_bool_var(f"consec_{e}_{days[i]}")
-                    self.model.add(a + b <= 1 + c)
-                    self._penalties.append(w * c)
+                if w:
+                    for i in range(len(days) - 1):
+                        a = self._worked_var(e, days[i])
+                        b = self._worked_var(e, days[i + 1])
+                        if a is None or b is None:
+                            continue
+                        c = self.model.new_bool_var(f"consec_{e}_{days[i]}")
+                        self.model.add(a + b <= 1 + c)
+                        self._penalties.append(w * c)
+            # neutral: пары не штрафуем, действует только потолок + штраф за 3-й день.
 
     def _prefer_2day_rest(self):
         """2 days rest after full 24h or night shift (soft)."""
