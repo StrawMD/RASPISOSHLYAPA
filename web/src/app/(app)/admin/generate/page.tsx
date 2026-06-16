@@ -208,7 +208,7 @@ export default function GeneratePage() {
           </label>
 
           <Button
-            onClick={() => handleGenerate(false)}
+            onClick={() => handleGenerate(true)}
             disabled={loading}
             size="lg"
             className="w-full sm:w-auto"
@@ -225,6 +225,12 @@ export default function GeneratePage() {
               </>
             )}
           </Button>
+          <p className="text-xs text-muted-foreground">
+            Солвер уважает все предпочтения и правила (в т.ч. потолок ночных
+            ≤30%). Смены, которые нельзя закрыть без нарушения предпочтений,
+            он оставит <strong>пустыми</strong> и покажет списком — их
+            добавляете вручную в редакторе.
+          </p>
         </CardContent>
       </Card>
 

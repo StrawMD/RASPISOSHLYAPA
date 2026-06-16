@@ -25,7 +25,11 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const { year, month, normHours, timeLimit, seniorityFilter, versionName } =
     body;
-  const relax = Boolean(body.relax);
+  // По умолчанию генерация идёт в режиме релаксации: смены, которые нельзя
+  // закрыть без нарушения предпочтений/правил (в т.ч. потолка ночных 30%),
+  // остаются ПУСТЫМИ и помечаются для ручного заполнения. Полное жёсткое
+  // покрытие можно запросить явным relax:false.
+  const relax = body.relax !== false;
 
   const posts = await prisma.post.findMany({ orderBy: { sortOrder: "asc" } });
   const employees = await prisma.employee.findMany();

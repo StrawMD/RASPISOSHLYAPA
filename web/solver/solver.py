@@ -345,6 +345,14 @@ class ScheduleSolver:
             med = getattr(emp, "medical_restriction", "none") or "none"
             no_night = med in ("no_night", "day_only")
             no_full = med in ("no_24h", "no_night", "day_only")
+            # Жёсткий запрет поста (avoid_hard) — НЕ ставить вообще: переменную
+            # не создаём, слот при нехватке людей останется пустым (на ручное
+            # заполнение). Фикс админа перекрывает запрет.
+            pp_raw = self.post_prefs.get(emp.name, {})
+            banned_posts = (
+                {pid for pid, lvl in pp_raw.items() if lvl == "avoid_hard"}
+                if isinstance(pp_raw, dict) else set()
+            )
 
             for d in self.config.days:
                 if d in emp_blocked and d not in emp_fixed_days:
@@ -354,6 +362,8 @@ class ScheduleSolver:
                     if post.id not in emp.allowed_posts and not ff:
                         continue
                     if d not in self.config.post_active_days.get(post.id, []) and not ff:
+                        continue
+                    if post.id in banned_posts and not ff:
                         continue
 
                     if p in self._24h_pidxs:
@@ -782,19 +792,24 @@ class ScheduleSolver:
                     self.model.add(sum(nvars) <= mn)
 
     def _night_share_cap(self):
-        """Мягкий потолок ДОЛИ ночных (н) смен в личном графике (≈30%).
+        """ЖЁСТКИЙ потолок ДОЛИ ночных (н) смен в личном графике (≤30%).
 
         Раньше ночные концентрировались у нескольких людей, причём у них почти
-        все смены были ночными (условно 9 ночных и 1 дневная). Ограничиваем долю
-        ночных: за каждую «лишнюю» ночную сверх ~30% всех смен сотрудника —
-        штраф. Реализовано мягко (через штраф, не жёстко), чтобы не сделать месяц
-        нерешаемым, когда ночных объективно много, а допущенных к ним мало.
+        все смены были ночными (условно 9 ночных и 1 дневная). Теперь доля
+        ночных жёстко ограничена ~30% всех смен сотрудника: лишние ночные просто
+        НЕ ставятся (в relax-режиме слот остаётся пустым на ручное заполнение).
         Линейная форма доли: 10·night ≤ 3·total ⟺ night ≤ 0.3·total.
+
+        Исключение: если админ вручную зафиксировал сотруднику ночные смены
+        (фикс-слоты), жёсткий потолок к нему НЕ применяем (фикс важнее правила) —
+        иначе месяц станет нерешаемым.
+
+        Дополнительно (если включён вес night_share>0) — мягкий выпуклый штраф,
+        который РАЗМАЗЫВАЕТ ночные между многими людьми (k-я ночная дороже).
         """
-        w = self.W.get("night_share", 0)
-        if not w:
-            return
         NUM, DEN = 10, 3  # 10/3 ≈ 3.33 ⟹ доля ночных ≤ 30%
+        fixed_n = getattr(self, "_fixed_n_by_e", {})
+        w = self.W.get("night_share", 0)
         for e in range(len(self.employees)):
             nvars = [v for (ee, _d, _p), v in self.xn.items() if ee == e]
             if not nvars:
@@ -806,7 +821,13 @@ class ScheduleSolver:
                 continue
             night = sum(nvars)
             total = sum(total_vars)
-            # (1) Доля: штраф за ночные сверх ~30% всех смен сотрудника.
+            # (0) ЖЁСТКИЙ потолок ≤30% (кроме тех, кому ночи зафиксировал админ).
+            if not fixed_n.get(e):
+                self.model.add(NUM * night <= DEN * total)
+            if not w:
+                continue
+            # (1) Доля: штраф за ночные сверх ~30% всех смен сотрудника
+            #     (для зафиксированных, где жёсткого потолка нет, всё равно давит).
             excess = self.model.new_int_var(0, NUM * len(nvars), f"nshare_{e}")
             self.model.add(excess >= NUM * night - DEN * total)
             self._penalties.append(w * excess)
