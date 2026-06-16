@@ -171,6 +171,11 @@ class MonthConfig:
     # уровня штрафуется почти как жёсткое нарушение — договорная ставка (0.5/1.0)
     # должна заполняться точно. Между полом и целью — обычный мягкий недобор.
     employee_floor_hours: dict[str, float] = field(default_factory=dict)
+    # «Справедливый» уровень нагрузки (≈1.25 ставки × норма × доступность, но не
+    # выше личного потолка). Всех сперва тянем сюда (выпуклый недобор), и лишь
+    # потом перегружаем тех, у кого потолок выше. Если не задан — берётся
+    # employee_target_hours.
+    employee_fair_hours: dict[str, float] = field(default_factory=dict)
 
     @property
     def days(self) -> list[int]:
@@ -224,6 +229,7 @@ def generate_month_config(
     employee_max_hours: dict[str, float] | None = None,
     employee_hard_max_hours: dict[str, float] | None = None,
     employee_floor_hours: dict[str, float] | None = None,
+    employee_fair_hours: dict[str, float] | None = None,
     posts: list[Post] | None = None,
 ) -> MonthConfig:
     """Генерация конфига на месяц с дефолтными активными днями для каждого поста.
@@ -272,4 +278,5 @@ def generate_month_config(
         employee_max_hours=employee_max_hours or {},
         employee_hard_max_hours=employee_hard_max_hours or {},
         employee_floor_hours=employee_floor_hours or {},
+        employee_fair_hours=employee_fair_hours or {},
     )

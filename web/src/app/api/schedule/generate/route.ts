@@ -5,7 +5,7 @@ import { runSolver, SolverInput, SolverInfeasibleError } from "@/lib/solver-brid
 import { computeTenure } from "@/lib/seniority";
 import { prismaSchemaHint } from "@/lib/prisma-schema-hint";
 import { validateFixedSlots } from "@/lib/validate-fixed-slots";
-import { clampRates, workNormHours } from "@/lib/rates";
+import { clampRates, workNormHours, isPartTime } from "@/lib/rates";
 
 function safeJson<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
@@ -63,6 +63,9 @@ export async function POST(req: NextRequest) {
 
   const postOverrides: Record<string, number[]> = {};
 
+  const fmtYmd = (y: number, m: number, d: number) =>
+    `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+
   for (const p of posts) {
     const aw: number[] = safeJson(p.activeWeekdays, []);
     const sd: number[] = safeJson(p.specificDays, []);
@@ -71,6 +74,9 @@ export async function POST(req: NextRequest) {
       const specificSet = new Set(sd);
       const days: number[] = [];
       for (let d = 1; d <= daysInMonth; d++) {
+        // 12-часовые посты в праздник не работают (как и дефолтная логика
+        // солвера). Суточные (24ч) посты — приёмник, работают всегда.
+        if (p.shiftHours !== 24 && holidayDates.has(fmtYmd(year, month, d))) continue;
         const dow = (new Date(year, month - 1, d).getDay() + 6) % 7;
         if (weekdaySet.has(dow) || specificSet.has(d)) days.push(d);
       }
@@ -315,7 +321,13 @@ export async function POST(req: NextRequest) {
   const employeeMaxHours: Record<string, number> = {};
   const employeeHardMaxHours: Record<string, number> = {};
   const employeeFloorHours: Record<string, number> = {};
+  const employeeFairHours: Record<string, number> = {};
   const nh = normHours || monthRecord.normHours;
+
+  // «Справедливый» уровень нагрузки: всех сперва загружаем до ~1.25 ставки
+  // (независимо от личной целевой ставки), и лишь потом перегружаем тех, у кого
+  // потолок выше (1.5/2.0). Полставочников держим на их личной цели.
+  const FAIR_RATE = 1.25;
 
   // Аварийная переработка: когда суммарный спрос превышает сумму желаемых
   // потолков (maxRate), солвер может выйти за желаемый потолок до аварийного
@@ -379,6 +391,19 @@ export async function POST(req: NextRequest) {
     employeeHardMaxHours[emp.name] = nh * hardRate * avail;
     // Пол базовой ставки: договорная ставка (0.5/1.0) × норма × доступность.
     employeeFloorHours[emp.name] = nh * eff.rate * avail;
+    // Справедливый уровень: полставочников — на их личной цели; всех остальных —
+    // на единой планке ~1.25 (с поправкой на желаемую нагрузку), но не выше
+    // личного потолка. К нему солвер тянет всех прежде, чем кого-то перегружать.
+    let fairRate: number;
+    if (isPartTime(eff.rate)) {
+      fairRate = boundedTarget;
+    } else {
+      let base = FAIR_RATE;
+      if (load === "more") base += 0.25;
+      else if (load === "less") base -= 0.25;
+      fairRate = Math.min(eff.maxRate, Math.max(eff.rate, base));
+    }
+    employeeFairHours[emp.name] = nh * fairRate * avail;
 
     // Гранулярность смены: если доступность так мала, что потолок часов
     // опускается ниже одной полной смены (напр. суточник, доступный только по
@@ -477,6 +502,7 @@ export async function POST(req: NextRequest) {
       employeeMaxHours,
       employeeHardMaxHours,
       employeeFloorHours,
+      employeeFairHours,
       fixedSlots: fixedSlotsForSolver,
     },
     postPreferences,

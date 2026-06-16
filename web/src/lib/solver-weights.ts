@@ -38,6 +38,7 @@ export const DEFAULT_WEIGHTS: Record<string, number> = {
   min_shifts_short: 600,
   dow_shift_avoid: 3000,
   prefer_night_bias: 600,
+  night_share: 200,
 };
 
 export interface WeightMeta {
@@ -86,6 +87,7 @@ export const WEIGHT_GROUPS: WeightGroup[] = [
       { key: "partial_penalty", label: "Штраф за дробление суток на день+ночь", hint: "", max: 1000, toggleable: true },
       { key: "shift_time_bias", label: "Сила личного режима (сутки/день)", hint: "Насколько уважать выбор «предпочитаю сутки/дневные».", max: 1500, toggleable: false },
       { key: "prefer_night_bias", label: "Сила режима «предпочитаю ночные»", hint: "Насколько отдавать ночные смены тем, кто их предпочёл.", max: 1500, toggleable: true },
+      { key: "night_share", label: "Потолок доли ночных (≈30% смен)", hint: "Не даёт ночным (н) концентрироваться у нескольких людей: штраф за долю ночных сверх ~30% всех смен сотрудника. Мягко — ночные всё равно закроются, но размажутся по людям.", max: 3000, toggleable: true },
       { key: "dow_shift_avoid", label: "Не ставить тип смены в день недели", hint: "Сила пожелания «в этот день недели не сутки/не ночь» (напр. «в пятницу не сутки»). Сильный мягкий запрет.", max: 8000, toggleable: true },
       { key: "legacy_24h_prefer", label: "Легаси: предпочтение типов 24ч", hint: "Старый механизм; можно держать на 0.", max: 400, toggleable: true },
     ],

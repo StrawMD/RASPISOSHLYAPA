@@ -75,6 +75,7 @@ DEFAULT_WEIGHTS: dict[str, int] = {
     "min_shifts_short": 600,     # штраф за каждую смену ниже желаемого минимума
     "dow_shift_avoid": 3000,     # сильный мягкий запрет типа смены в день недели
     "prefer_night_bias": 600,    # сила режима «предпочитаю ночные»
+    "night_share": 200,          # штраф за долю ночных (н) сверх ~30% смен человека
     "understaff": 100000,        # релаксация: штраф за каждый незакрытый слот
 }
 
@@ -248,6 +249,7 @@ class ScheduleSolver:
         self._max_hours()
         self._personal_shift_caps()
         self._hour_target_penalty()
+        self._night_share_cap()
         self._min_shifts_floor()
         self._consecutive_sequencing()
         self._prefer_2day_rest()
@@ -279,8 +281,65 @@ class ScheduleSolver:
         for name, dl in self.config.exclusions.items():
             blocked.setdefault(name, set()).update(dl)
 
+        # Ячейки, ЖЁСТКО зафиксированные админом (из Excel/фиксов), имеют
+        # приоритет над предпочтениями и доступностью: для них переменную
+        # создаём ВСЕГДА (даже при режиме only_full, «не ночь», отпуске или
+        # неактивном посте). Иначе фикс «не на что повесить» и солвер падает.
+        fixed_force: dict[tuple[int, int, int], set[str]] = {}
+        fixed_days_by_emp: dict[int, set[int]] = {}
+        _emp_idx = {em.name: i for i, em in enumerate(self.employees)}
+        _post_idx = {po.id: i for i, po in enumerate(self.posts)}
+        _flabel = re.compile(r"^(.+)\(([сдн])\)$")
+        for _d, _byp in (self.fixed_slots or {}).items():
+            try:
+                _d = int(_d)
+            except (TypeError, ValueError):
+                continue
+            for _pid, _labels in (_byp or {}).items():
+                _pi = _post_idx.get(_pid)
+                if _pi is None or not isinstance(_labels, list):
+                    continue
+                for _lab in _labels:
+                    _raw = str(_lab).strip()
+                    if not _raw:
+                        continue
+                    _m = _flabel.match(_raw)
+                    if self.posts[_pi].shift_hours == 24:
+                        if not _m:
+                            continue
+                        _nm, _kind = _m.group(1), _m.group(2)
+                    else:
+                        _nm = _m.group(1) if _m else _raw
+                        _kind = "reg"
+                    _ei = _emp_idx.get(_nm)
+                    if _ei is None:
+                        continue
+                    fixed_force.setdefault((_ei, _d, _pi), set()).add(_kind)
+                    fixed_days_by_emp.setdefault(_ei, set()).add(_d)
+
+        # Жёсткий потолок часов обязан вмещать зафиксированные часы. У людей с
+        # большим отпуском avail-потолок занижен, но раз админ зафиксировал их
+        # смены — значит, они работают; иначе месяц hard-infeasible. Поднимаем
+        # потолок (и аварийный) минимум до суммы зафиксированных часов.
+        _HRS = {"с": 24, "д": 12, "н": 12, "reg": 12}
+        _fixed_hours: dict[str, int] = {}
+        self._fixed_n_by_e: dict[int, int] = {}
+        self._fixed_f_by_e: dict[int, int] = {}
+        for (_ei, _d, _pi), _kinds in fixed_force.items():
+            nm = self.employees[_ei].name
+            _fixed_hours[nm] = _fixed_hours.get(nm, 0) + sum(_HRS.get(k, 12) for k in _kinds)
+            if "н" in _kinds:
+                self._fixed_n_by_e[_ei] = self._fixed_n_by_e.get(_ei, 0) + 1
+            if "с" in _kinds:
+                self._fixed_f_by_e[_ei] = self._fixed_f_by_e.get(_ei, 0) + 1
+        for nm, h in _fixed_hours.items():
+            cur = self.config.employee_hard_max_hours.get(nm)
+            if cur is None or cur < h:
+                self.config.employee_hard_max_hours[nm] = h
+
         for e, emp in enumerate(self.employees):
             emp_blocked = blocked.get(emp.name, set())
+            emp_fixed_days = fixed_days_by_emp.get(e, set())
             sp = self.shift_prefs.get(emp.name, {})
             mode = self.shift_time_modes.get(emp.name, "neutral")
             med = getattr(emp, "medical_restriction", "none") or "none"
@@ -288,12 +347,13 @@ class ScheduleSolver:
             no_full = med in ("no_24h", "no_night", "day_only")
 
             for d in self.config.days:
-                if d in emp_blocked:
+                if d in emp_blocked and d not in emp_fixed_days:
                     continue
                 for p, post in enumerate(self.posts):
-                    if post.id not in emp.allowed_posts:
+                    ff = fixed_force.get((e, d, p), set())
+                    if post.id not in emp.allowed_posts and not ff:
                         continue
-                    if d not in self.config.post_active_days.get(post.id, []):
+                    if d not in self.config.post_active_days.get(post.id, []) and not ff:
                         continue
 
                     if p in self._24h_pidxs:
@@ -320,11 +380,26 @@ class ScheduleSolver:
                             sp.get("pref_24h_day") is False
                             or mode == "only_full"
                         )
+                        # can_24h=False означает «нет допуска к суточным» — это
+                        # запрещает И полные сутки (с), И ночные (н) 12ч-смены на
+                        # суточном посту (см. AGENTS.md). Дневная (д) 12ч-смена —
+                        # обычная дневная работа, её не блокируем. Реальную приёмную
+                        # бригаду (Китова/Осипов/Костарев/Муравьёва/Сорокин) держим
+                        # допущенной через can24h=1 в БД, а не послаблением правила.
                         block_night = (
                             sp.get("pref_24h_night") is False
                             or mode == "only_full"
                             or no_night
+                            or not getattr(emp, "can_24h", True)
                         )
+
+                        # Фикс админа перекрывает блокировки для своей смены.
+                        if "с" in ff:
+                            can_full = True
+                        if "д" in ff:
+                            block_day = False
+                        if "н" in ff:
+                            block_night = False
 
                         if can_full:
                             self.xf[e, d, p] = self.model.new_bool_var(
@@ -339,8 +414,9 @@ class ScheduleSolver:
                                 f"xn_{e}_{d}_{p}")
                     else:
                         # Regular 12h posts: for "only_full" we forbid any
-                        # 12h work, so no variable is created at all.
-                        if mode == "only_full":
+                        # 12h work, so no variable is created at all — кроме
+                        # явно зафиксированной админом ячейки.
+                        if mode == "only_full" and not ff:
                             continue
                         self.x[e, d, p] = self.model.new_bool_var(
                             f"x_{e}_{d}_{p}")
@@ -433,8 +509,12 @@ class ScheduleSolver:
                     continue
 
                 if p in self._24h_pidxs:
-                    S_day = post.staff_required_day or post.staff_required
-                    S_night = post.staff_required_night or post.staff_required
+                    S_day = (post.staff_required_day
+                             if post.staff_required_day is not None
+                             else post.staff_required)
+                    S_night = (post.staff_required_night
+                               if post.staff_required_night is not None
+                               else post.staff_required)
 
                     f_vars = [self.xf[e, d, p]
                               for e in range(len(self.employees))
@@ -599,43 +679,73 @@ class ScheduleSolver:
         # потолок раньше, чем исчерпает дешёвый запас до потолка.
         w_emerg = max(self.W["over_ceiling"], w_over + 1)
 
+        def _convex_tiers(var, room: int, base_w: int, scale: int, tag: str):
+            """Разбить var (0..room) на тиры по 12 ч с ВЫПУКЛО растущей ценой.
+
+            Цена часа в тире k = base_w·scale·(k+1): первый тир дешёвый, каждый
+            следующий дороже. Благодаря выпуклости решателю выгоднее «размазать»
+            недобор/переработку поровну между людьми, а не свалить всё на одного
+            (у всех ~13–14 смен, а не у кого-то 10, у кого-то 17).
+            """
+            if room <= 0:
+                self.model.add(var == 0)
+                return
+            tiers = []
+            filled = 0
+            k = 0
+            while filled < room:
+                hi = min(TIER, room - filled)
+                tv = self.model.new_int_var(0, hi, f"{tag}_{k}")
+                tiers.append(tv)
+                self._penalties.append(base_w * scale * (k + 1) * tv)
+                filled += hi
+                k += 1
+            self.model.add(var == sum(tiers))
+
         for e, emp in enumerate(self.employees):
             terms = self._hour_terms(e)
             if not terms:
                 continue
             total = sum(terms)
-            target = int(self.config.employee_target_hours.get(
-                emp.name, self.config.norm_hours * emp.rate))
+            nh = self.config.norm_hours
+            floor = max(0, int(self.config.employee_floor_hours.get(emp.name, 0)))
+            # «Справедливый» уровень — единая планка (≈1.25 ставки), к которой
+            # тянем ВСЕХ прежде, чем кого-то перегружать. Если не передан —
+            # старая личная цель.
+            fair = int(self.config.employee_fair_hours.get(
+                emp.name,
+                self.config.employee_target_hours.get(
+                    emp.name, nh * emp.rate)))
             soft_cap = int(self.config.employee_max_hours.get(
-                emp.name, self.config.norm_hours * emp.max_rate))
+                emp.name, nh * emp.max_rate))
             hard_cap = int(self.config.employee_hard_max_hours.get(
                 emp.name, soft_cap))
-            soft_cap = max(soft_cap, target)
+            fair = max(floor, fair)
+            soft_cap = max(soft_cap, fair)
             hard_cap = max(hard_cap, soft_cap)
 
-            over = self.model.new_int_var(0, max(0, hard_cap - target), f"over_{e}")
-            under = self.model.new_int_var(0, max(0, target), f"under_{e}")
-            self.model.add(total - target == over - under)
-            self._penalties.append(w_under * under)
+            over = self.model.new_int_var(0, max(0, hard_cap - fair), f"over_{e}")
+            under = self.model.new_int_var(0, max(0, fair), f"under_{e}")
+            self.model.add(total - fair == over - under)
 
-            # Двухуровневый недобор: часы НИЖЕ базовой ставки (floor) штрафуются
-            # дополнительно (почти жёстко) — договорная ставка 0.5/1.0 должна
-            # заполняться точно. Между floor и target — обычный мягкий недобор.
-            floor = int(self.config.employee_floor_hours.get(emp.name, 0))
-            floor = min(max(0, floor), target)
-            if floor > 0 and w_under_floor > w_under:
-                below_floor = self.model.new_int_var(0, floor, f"underfloor_{e}")
-                # below_floor ≥ under − (target − floor) = floor − total (при недоборе)
-                self.model.add(below_floor >= under - (target - floor))
-                self._penalties.append((w_under_floor - w_under) * below_floor)
+            # --- Недобор: зона «до справедливого уровня» (выпукло) + зона «ниже
+            # договорной ставки» (почти жёстко). under_floor дороже, поэтому
+            # решатель сперва наполняет fair-зону (её домен ограничен сверху).
+            fair_room = max(0, fair - floor)
+            under_fair = self.model.new_int_var(0, fair_room, f"underfair_{e}")
+            under_floor = self.model.new_int_var(0, max(0, floor), f"underflr_{e}")
+            self.model.add(under == under_fair + under_floor)
+            _convex_tiers(under_fair, fair_room, w_under, 1, f"uft_{e}")
+            self._penalties.append(w_under_floor * under_floor)
 
-            desired_room = soft_cap - target
+            # --- Переработка: желаемая (fair→потолок, выпукло и дёшево —
+            # достаётся тем, у кого выше maxRate) + аварийная (сверх потолка).
+            desired_room = soft_cap - fair
             emerg_room = hard_cap - soft_cap
 
             if emerg_room <= 0:
-                # Нет аварийного запаса (потолок уже = цели или = 2.0) — вся
-                # переработка «желаемая», штрафуется дёшево.
-                self._penalties.append(w_over * over)
+                self.model.add(over <= max(0, desired_room))
+                _convex_tiers(over, desired_room, w_over, 1, f"dot_{e}")
                 self._overtime_vars.append((emp.name, over, None))
                 continue
 
@@ -643,39 +753,76 @@ class ScheduleSolver:
                 0, max(0, desired_room), f"dover_{e}")
             emergency = self.model.new_int_var(0, emerg_room, f"emerg_{e}")
             self.model.add(over == desired_over + emergency)
-            if desired_room > 0:
-                self._penalties.append(w_over * desired_over)
-            else:
-                self.model.add(desired_over == 0)
+            _convex_tiers(desired_over, desired_room, w_over, 1, f"dot_{e}")
 
             R = self._emergency_reluctance(emp)
-            tiers = []
-            filled = 0
-            k = 0
-            while filled < emerg_room:
-                hi = min(TIER, emerg_room - filled)
-                tv = self.model.new_int_var(0, hi, f"emt_{e}_{k}")
-                tiers.append(tv)
-                # стоимость часа в тире k растёт линейно → выпуклый штраф.
-                self._penalties.append(w_emerg * R * (k + 1) * tv)
-                filled += hi
-                k += 1
-            self.model.add(emergency == sum(tiers))
+            _convex_tiers(emergency, emerg_room, w_emerg, R, f"emt_{e}")
             self._overtime_vars.append((emp.name, over, emergency))
 
     def _personal_shift_caps(self):
-        """Жёсткие личные лимиты на число суточных (с) и ночных (н) за месяц."""
+        """Жёсткие личные лимиты на число суточных (с) и ночных (н) за месяц.
+
+        Зафиксированные админом смены имеют приоритет: лимит поднимается минимум
+        до числа фиксов, иначе пин-смены сделали бы месяц нерешаемым (напр. у
+        человека maxNights=5, а в Excel ему проставлено 7 ночных)."""
+        fn = getattr(self, "_fixed_n_by_e", {})
+        ff = getattr(self, "_fixed_f_by_e", {})
         for e, emp in enumerate(self.employees):
             mf = getattr(emp, "max_full", None)
             mn = getattr(emp, "max_nights", None)
             if mf is not None and mf >= 0:
+                mf = max(mf, ff.get(e, 0))
                 fvars = [v for (ee, _d, _p), v in self.xf.items() if ee == e]
                 if fvars:
                     self.model.add(sum(fvars) <= mf)
             if mn is not None and mn >= 0:
+                mn = max(mn, fn.get(e, 0))
                 nvars = [v for (ee, _d, _p), v in self.xn.items() if ee == e]
                 if nvars:
                     self.model.add(sum(nvars) <= mn)
+
+    def _night_share_cap(self):
+        """Мягкий потолок ДОЛИ ночных (н) смен в личном графике (≈30%).
+
+        Раньше ночные концентрировались у нескольких людей, причём у них почти
+        все смены были ночными (условно 9 ночных и 1 дневная). Ограничиваем долю
+        ночных: за каждую «лишнюю» ночную сверх ~30% всех смен сотрудника —
+        штраф. Реализовано мягко (через штраф, не жёстко), чтобы не сделать месяц
+        нерешаемым, когда ночных объективно много, а допущенных к ним мало.
+        Линейная форма доли: 10·night ≤ 3·total ⟺ night ≤ 0.3·total.
+        """
+        w = self.W.get("night_share", 0)
+        if not w:
+            return
+        NUM, DEN = 10, 3  # 10/3 ≈ 3.33 ⟹ доля ночных ≤ 30%
+        for e in range(len(self.employees)):
+            nvars = [v for (ee, _d, _p), v in self.xn.items() if ee == e]
+            if not nvars:
+                continue
+            total_vars = []
+            for d in self.config.days:
+                total_vars.extend(self._all_vars_day(e, d))
+            if not total_vars:
+                continue
+            night = sum(nvars)
+            total = sum(total_vars)
+            # (1) Доля: штраф за ночные сверх ~30% всех смен сотрудника.
+            excess = self.model.new_int_var(0, NUM * len(nvars), f"nshare_{e}")
+            self.model.add(excess >= NUM * night - DEN * total)
+            self._penalties.append(w * excess)
+            # (2) ВЫПУКЛЫЙ штраф на АБСОЛЮТНОЕ число ночных: k-я ночная смена
+            # стоит дороже предыдущей (цена ≈ w·k). Из-за выпуклости решателю
+            # выгодно размазать ночные между многими людьми (макс ~6–7 у одного),
+            # а не свалить 11 ночей на одного. Тиры по 1 смене; минимизация сама
+            # выбирает самые дешёвые (нижние) тиры, давая суммарно w·k(k+1)/2.
+            night_int = self.model.new_int_var(0, len(nvars), f"nint_{e}")
+            self.model.add(night_int == night)
+            tiers = []
+            for k in range(len(nvars)):
+                tv = self.model.new_bool_var(f"ntier_{e}_{k}")
+                tiers.append(tv)
+                self._penalties.append(w * (k + 1) * tv)
+            self.model.add(night_int == sum(tiers))
 
     def _min_shifts_floor(self):
         """Мягкий пол по числу смен: «хочу заработать не меньше N смен».
@@ -1294,8 +1441,12 @@ class ScheduleSolver:
                 if d not in self.config.post_active_days.get(post.id, []):
                     continue
                 if post.shift_hours == 24:
-                    s_day = post.staff_required_day or post.staff_required
-                    s_night = post.staff_required_night or post.staff_required
+                    s_day = (post.staff_required_day
+                             if post.staff_required_day is not None
+                             else post.staff_required)
+                    s_night = (post.staff_required_night
+                               if post.staff_required_night is not None
+                               else post.staff_required)
                     demand += (s_day + s_night) * 12
                 else:
                     demand += post.staff_required * post.shift_hours

@@ -46,6 +46,8 @@ export interface SolverInput {
     employeeHardMaxHours?: Record<string, number>;
     /** «Пол» базовой ставки (rate × норма × доступность) — заполняется почти жёстко. */
     employeeFloorHours?: Record<string, number>;
+    /** «Справедливый» уровень (≈1.25 ставки) — всех тянем сюда до перегрузки. */
+    employeeFairHours?: Record<string, number>;
     /** День (строка 1..31) → postId → список ячеек — жёстко заданные смены */
     fixedSlots?: Record<string, Record<string, string[]>>;
   };

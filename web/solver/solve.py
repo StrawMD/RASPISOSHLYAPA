@@ -71,6 +71,7 @@ def main():
         employee_max_hours=cfg.get("employeeMaxHours", {}),
         employee_hard_max_hours=cfg.get("employeeHardMaxHours", {}),
         employee_floor_hours=cfg.get("employeeFloorHours", {}),
+        employee_fair_hours=cfg.get("employeeFairHours", {}),
         posts=posts,
     )
 
