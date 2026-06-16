@@ -44,7 +44,7 @@ export default function GeneratePage() {
   } | null>(null);
   const [diagnostics, setDiagnostics] = useState<string[] | null>(null);
 
-  async function handleGenerate(relax = false) {
+  async function handleGenerate(relax = true) {
     setLoading(true);
     setResult(null);
     setDiagnostics(null);
