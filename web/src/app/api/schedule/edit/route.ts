@@ -173,6 +173,10 @@ export async function GET(req: NextRequest) {
       normHours,
     },
     schedule: safeJson(version.data, {}),
+    fixedSlots: safeJson<Record<string, Record<string, string[]>>>(
+      version.month.solverFixedSlots ?? "{}",
+      {},
+    ),
     employeeHours: safeJson(version.employeeHours, {}),
     relaxed: Boolean(sp.relaxed),
     unfilled: sp.unfilled ?? [],

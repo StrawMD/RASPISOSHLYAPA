@@ -90,6 +90,8 @@ export interface ComplianceResult {
   violationCount: number;
   /** Ключи `${day}:${postId}:${label}` для подсветки конкретных ячеек. */
   violationKeys: Set<string>;
+  /** Ключи `${day}:${postId}:${label}` зафиксированных админом ячеек. */
+  fixedKeys: Set<string>;
 }
 
 type Schedule = Record<string, Record<string, string[]>>;
@@ -162,7 +164,21 @@ export function analyzeSchedule(
   normHours: number,
   year: number,
   month: number,
+  fixedSlots?: Schedule | null,
 ): ComplianceResult {
+  // Зафиксированные админом ячейки (`solverFixedSlots`) намеренно перекрывают
+  // любые запреты — это операционное решение («фикс важнее правила»). Поэтому
+  // их НЕ считаем нарушением и помечаем отдельным цветом, а не красным.
+  const fixedKeys = new Set<string>();
+  if (fixedSlots) {
+    for (const [dayStr, byPost] of Object.entries(fixedSlots)) {
+      if (!byPost) continue;
+      for (const [postId, labels] of Object.entries(byPost)) {
+        if (!Array.isArray(labels)) continue;
+        for (const label of labels) fixedKeys.add(`${dayStr}:${postId}:${label}`);
+      }
+    }
+  }
   const postMap = new Map(posts.map((p) => [p.id, p]));
   const empMap = new Map(employees.map((e) => [e.name, e]));
 
@@ -229,7 +245,8 @@ export function analyzeSchedule(
 
         const emp = empMap.get(name);
         const prefs = emp?.prefs;
-        if (prefs) {
+        const isFixed = fixedKeys.has(`${day}:${postId}:${label}`);
+        if (prefs && !isFixed) {
           const reasons = detectReasons(prefs, postId, kind, day, dow);
           if (reasons.length > 0) {
             const reason = reasons.join("; ");
@@ -275,5 +292,6 @@ export function analyzeSchedule(
     totalPct: totalTargetHours > 0 ? (totalHours / totalTargetHours) * 100 : null,
     violationCount,
     violationKeys,
+    fixedKeys,
   };
 }

@@ -99,6 +99,11 @@ function computeHourStat(
 const VIOLATION_CLASS =
   "bg-red-600 text-white border-red-700 dark:bg-red-600 dark:text-white";
 
+// Зафиксированная админом ячейка (solverFixedSlots) — синяя «прибита гвоздём».
+// Намеренно перекрывает запреты, поэтому не красная, а отдельным цветом.
+const FIXED_CLASS =
+  "bg-sky-500/25 text-sky-900 dark:text-sky-100 border-sky-500/60";
+
 const LEVEL_CLASSES: Record<HourStat["level"], string> = {
   green:
     "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/40",
@@ -138,6 +143,7 @@ export function ScheduleEditPage() {
 
   const [version, setVersion] = useState<VersionInfo | null>(null);
   const [schedule, setSchedule] = useState<Schedule>({});
+  const [fixedSlots, setFixedSlots] = useState<Schedule>({});
   const [employeeHours, setEmployeeHours] = useState<Record<string, number>>({});
   const [posts, setPosts] = useState<Post[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
@@ -163,6 +169,7 @@ export function ScheduleEditPage() {
       const data = await res.json();
       setVersion(data.version);
       setSchedule(data.schedule);
+      setFixedSlots(data.fixedSlots ?? {});
       setEmployeeHours(data.employeeHours);
       setPosts(data.posts);
       setEmployees(data.employees);
@@ -257,8 +264,9 @@ export function ScheduleEditPage() {
       version.normHours ?? 0,
       version.year,
       version.month,
+      fixedSlots,
     );
-  }, [schedule, posts, employees, prefsByName, version]);
+  }, [schedule, posts, employees, prefsByName, version, fixedSlots]);
 
   async function doEdit(
     day: number,
@@ -314,6 +322,7 @@ export function ScheduleEditPage() {
       violationReasonByKey.set(`${v.day}:${v.postId}:${v.label}`, v.reason),
     ),
   );
+  const fixedKeys = compliance?.fixedKeys ?? new Set<string>();
 
   function cellHole(day: number, postId: string): number {
     const target = cellTargets[`${day}:${postId}`];
@@ -477,20 +486,34 @@ export function ScheduleEditPage() {
                           {people.map((person: string, idx: number) => {
                             const baseName = person.replace(/\([сдн]\)$/, "");
                             const personStat = getStat(baseName);
-                            const violation = violationReasonByKey.get(
+                            const isFixed = fixedKeys.has(
                               `${d}:${p.id}:${person}`,
                             );
+                            // Фикс перекрывает запреты — нарушение к нему не применяем.
+                            const violation = isFixed
+                              ? undefined
+                              : violationReasonByKey.get(`${d}:${p.id}:${person}`);
+                            const cellClass = violation
+                              ? VIOLATION_CLASS
+                              : isFixed
+                                ? FIXED_CLASS
+                                : LEVEL_CLASSES[personStat.level];
                             return (
                               <Popover key={idx}>
                                 <PopoverTrigger
-                                  className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs hover:opacity-80 transition-opacity border ${violation ? VIOLATION_CLASS : LEVEL_CLASSES[personStat.level]}`}
+                                  className={`inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-xs hover:opacity-80 transition-opacity border ${cellClass}`}
                                   title={
                                     violation
                                       ? `⚠ Жёсткое ограничение: ${violation}`
-                                      : `Всего: ${Math.round(personStat.hours)}ч · По ставке: ${Math.round(personStat.target)}ч · Потолок: ${Math.round(personStat.cap)}ч`
+                                      : isFixed
+                                        ? `🔒 Зафиксировано админом (перекрывает запреты) · ${Math.round(personStat.hours)}ч`
+                                        : `Всего: ${Math.round(personStat.hours)}ч · По ставке: ${Math.round(personStat.target)}ч · Потолок: ${Math.round(personStat.cap)}ч`
                                   }
                                 >
                                   {violation && <span className="mr-0.5">⚠</span>}
+                                  {!violation && isFixed && (
+                                    <span className="mr-0.5">🔒</span>
+                                  )}
                                   {person}
                                   <span className="opacity-70 text-[10px]">
                                     · {Math.round(personStat.hours)}ч
@@ -507,6 +530,14 @@ export function ScheduleEditPage() {
                                     {violation && (
                                       <div className="mb-2 rounded bg-red-600/15 border border-red-600/50 px-2 py-1 text-[11px] text-red-700 dark:text-red-300">
                                         ⚠ Жёсткое ограничение: {violation}
+                                      </div>
+                                    )}
+                                    {!violation && isFixed && (
+                                      <div className="mb-2 rounded bg-sky-600/15 border border-sky-600/50 px-2 py-1 text-[11px] text-sky-700 dark:text-sky-300">
+                                        🔒 Зафиксировано админом — солвер обязан
+                                        сохранить эту ячейку, поэтому она
+                                        перекрывает любые запреты (медотвод,
+                                        «не ставить», недоступный день).
                                       </div>
                                     )}
                                     <div className="flex items-center gap-1 mb-2">
