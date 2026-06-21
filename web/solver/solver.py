@@ -325,6 +325,10 @@ class ScheduleSolver:
         # Доступно ограничению очерёдности: окна, задевающие фикс-дни, не
         # ограничиваем жёстко (фикс важнее, иначе месяц станет нерешаемым).
         self._fixed_days_by_emp = fixed_days_by_emp
+        # (e, d, p) → набор зафиксированных видов смен ("с"/"д"/"н"/"reg").
+        # Нужен покрытию: фикс может «перевыполнить» слот (напр. суточник (с)
+        # уже закрывает ночь, а админ вдобавок прикрепил ночного (н)).
+        self._fixed_force = fixed_force
 
         # Жёсткий потолок часов обязан вмещать зафиксированные часы. У людей с
         # большим отпуском avail-потолок занижен, но раз админ зафиксировал их
@@ -575,45 +579,68 @@ class ScheduleSolver:
                             f"{post.name}, день {d}: некем закрыть ночь "
                             f"(доступно {len(night_emps)} из {S_night})")
 
+                    ff = self._fixed_force
+                    forced_day = sum(
+                        1 for e in range(len(self.employees))
+                        if {"с", "д"} & ff.get((e, d, p), set()))
+                    forced_night = sum(
+                        1 for e in range(len(self.employees))
+                        if {"с", "н"} & ff.get((e, d, p), set()))
+
                     all_day = f_vars + d_vars
                     all_night = f_vars + n_vars
                     self._cover_target(all_day, S_day, len(day_emps),
-                                       post, d, "день")
+                                       post, d, "день", forced_day)
                     self._cover_target(all_night, S_night, len(night_emps),
-                                       post, d, "ночь")
+                                       post, d, "ночь", forced_night)
                 else:
                     S = post.staff_required
                     assigned = [self.x[e, d, p]
                                 for e in range(len(self.employees))
                                 if (e, d, p) in self.x]
                     n = len(assigned)
+                    forced = sum(
+                        1 for e in range(len(self.employees))
+                        if "reg" in self._fixed_force.get((e, d, p), set()))
                     if n < S:
                         _log(f"  ⚠  {post.name} день {d}: "
                              f"доступно {n}, нужно {S}")
                         self.diagnostics.append(
                             f"{post.name}, день {d}: доступно {n}, нужно {S}")
-                    self._cover_target(assigned, S, n, post, d, "смена")
+                    self._cover_target(assigned, S, n, post, d, "смена", forced)
 
-    def _cover_target(self, assigned, required, available, post, d, kind):
+    def _cover_target(self, assigned, required, available, post, d, kind,
+                      forced=0):
         """Ограничение покрытия одного слота.
 
         Обычный режим: жёстко закрыть min(required, available) позиций.
         Режим релаксации: стремиться к полному `required`, но допускать
         недобор `shortfall` с большим штрафом и регистрировать «дыру».
+
+        `forced` — число ЗАФИКСИРОВАННЫХ админом назначений в этом слоте. Фикс
+        имеет абсолютный приоритет и может «перевыполнить» норматив (напр. на
+        суточном посту админ держит суточника (с) И отдельного ночного (н),
+        хотя ночь требует 1). Поэтому целевой уровень покрытия поднимаем минимум
+        до числа фиксов — иначе форс-ячейки сделали бы месяц нерешаемым.
         """
+        # Сколько реально нужно закрыть: обычный норматив, но не меньше числа
+        # уже зафиксированных людей (перебор из-за фикса — допустим).
+        target = max(min(required, available), forced)
+
         if not self.relax:
             if not assigned:
                 return
-            self.model.add(sum(assigned) == min(required, available))
+            self.model.add(sum(assigned) == target)
             return
 
-        # Релаксация: required может превышать число доступных переменных —
+        # Релаксация: target может превышать число доступных переменных —
         # тогда недобор неизбежен и будет отражён в отчёте.
-        short = self.model.new_int_var(0, required, f"short_{post.id}_{d}_{kind}")
+        short = self.model.new_int_var(0, max(target, 1),
+                                       f"short_{post.id}_{d}_{kind}")
         if assigned:
-            self.model.add(sum(assigned) + short == required)
+            self.model.add(sum(assigned) + short == target)
         else:
-            self.model.add(short == required)
+            self.model.add(short == target)
         self._penalties.append(self.W["understaff"] * short)
         self.shortfalls.append((post, d, kind, short))
 
