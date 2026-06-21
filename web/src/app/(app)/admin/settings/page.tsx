@@ -1,26 +1,37 @@
 import { prisma } from "@/lib/db";
 import { mergeWeights } from "@/lib/solver-weights";
+import { mergeSolverConfig } from "@/lib/solver-config";
 import { SettingsForm } from "./settings-form";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminSettingsPage() {
-  const row = await prisma.setting.findUnique({
-    where: { key: "solverWeights" },
-  });
-  let saved: Record<string, number> | null = null;
-  if (row) {
+  const [weightsRow, configRow] = await Promise.all([
+    prisma.setting.findUnique({ where: { key: "solverWeights" } }),
+    prisma.setting.findUnique({ where: { key: "solverConfig" } }),
+  ]);
+  let savedWeights: Record<string, number> | null = null;
+  if (weightsRow) {
     try {
-      saved = JSON.parse(row.value);
+      savedWeights = JSON.parse(weightsRow.value);
     } catch {
-      saved = null;
+      savedWeights = null;
     }
   }
-  const weights = mergeWeights(saved);
+  let savedConfig: Record<string, number> | null = null;
+  if (configRow) {
+    try {
+      savedConfig = JSON.parse(configRow.value);
+    } catch {
+      savedConfig = null;
+    }
+  }
+  const weights = mergeWeights(savedWeights);
+  const solverConfig = mergeSolverConfig(savedConfig);
 
   return (
     <div className="max-w-3xl">
-      <SettingsForm initialWeights={weights} />
+      <SettingsForm initialWeights={weights} initialSolverConfig={solverConfig} />
     </div>
   );
 }

@@ -17,6 +17,18 @@ import {
   type ComplianceEmployee,
   type CompliancePrefs,
 } from "@/lib/schedule-compliance";
+import {
+  formatScheduleLabel,
+  inverseFixedEdit,
+  type FixedEditOp,
+  type ShiftKind,
+} from "@/lib/schedule-labels";
+
+const KIND_LABELS: { key: ShiftKind; label: string }[] = [
+  { key: "full", label: "сутки (с)" },
+  { key: "day", label: "день (д)" },
+  { key: "night", label: "ночь (н)" },
+];
 
 const DAY_NAMES = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
@@ -45,6 +57,10 @@ type EditOp = {
   oldValue: string | null;
   newValue: string | null;
 };
+type HistEntry =
+  | { scope: "version"; op: EditOp }
+  | { scope: "fixed"; op: FixedEditOp };
+
 type EditLog = {
   id: string;
   day: number;
@@ -166,8 +182,8 @@ export function ScheduleEditPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [prefsByName, setPrefsByName] = useState<Record<string, PrefInfo>>({});
   const [recentEdits, setRecentEdits] = useState<EditLog[]>([]);
-  const [undoStack, setUndoStack] = useState<EditOp[]>([]);
-  const [redoStack, setRedoStack] = useState<EditOp[]>([]);
+  const [histStack, setHistStack] = useState<HistEntry[]>([]);
+  const [histFuture, setHistFuture] = useState<HistEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [showLog, setShowLog] = useState(false);
   const [relaxed, setRelaxed] = useState(false);
@@ -313,6 +329,39 @@ export function ScheduleEditPage() {
     return { ...op, oldValue: op.newValue, newValue: op.oldValue };
   }
 
+  async function runFixedEdit(op: FixedEditOp): Promise<boolean> {
+    if (!version) return false;
+    const res = await fetch("/api/admin/fixed-slots", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        year: version.year,
+        month: version.month,
+        ...op,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      setFixedSlots(data.fixedSlots ?? {});
+      return true;
+    }
+    const d = await res.json().catch(() => null);
+    toast.error(d?.error ?? "Ошибка фикса");
+    return false;
+  }
+
+  function inverseHist(entry: HistEntry): HistEntry {
+    if (entry.scope === "version") {
+      return { scope: "version", op: inverseOp(entry.op) };
+    }
+    return { scope: "fixed", op: inverseFixedEdit(entry.op) };
+  }
+
+  async function applyHist(entry: HistEntry): Promise<boolean> {
+    if (entry.scope === "version") return runEdit(entry.op);
+    return runFixedEdit(entry.op);
+  }
+
   async function doEdit(
     day: number,
     postId: string,
@@ -322,40 +371,76 @@ export function ScheduleEditPage() {
   ) {
     const op: EditOp = { day, postId, editType, oldValue, newValue };
     if (await runEdit(op)) {
-      setUndoStack((s) => [...s, op]);
-      setRedoStack([]);
+      setHistStack((s) => [...s, { scope: "version", op }]);
+      setHistFuture([]);
       toast.success("Изменено");
     }
   }
 
+  async function doFixedEdit(op: FixedEditOp, msg = "Фикс обновлён") {
+    if (await runFixedEdit(op)) {
+      setHistStack((s) => [...s, { scope: "fixed", op }]);
+      setHistFuture([]);
+      toast.success(msg);
+    }
+  }
+
+  async function toggleFix(
+    day: number,
+    postId: string,
+    label: string,
+    pin: boolean,
+  ) {
+    await doFixedEdit(
+      pin
+        ? {
+            day,
+            postId,
+            editType: "assign",
+            oldValue: null,
+            newValue: label,
+          }
+        : {
+            day,
+            postId,
+            editType: "remove",
+            oldValue: label,
+            newValue: null,
+          },
+      pin ? "Зафиксировано для генерации" : "Фикс снят",
+    );
+  }
+
   async function undoEdit() {
-    if (undoStack.length === 0) return;
-    const op = undoStack[undoStack.length - 1];
-    setUndoStack((s) => s.slice(0, -1));
-    if (await runEdit(inverseOp(op))) {
-      setRedoStack((r) => [...r, op]);
+    if (histStack.length === 0) return;
+    const entry = histStack[histStack.length - 1];
+    setHistStack((s) => s.slice(0, -1));
+    if (await applyHist(inverseHist(entry))) {
+      setHistFuture((f) => [...f, entry]);
       toast.success("Отменено");
     } else {
-      setUndoStack((s) => [...s, op]);
+      setHistStack((s) => [...s, entry]);
     }
   }
 
   async function redoEdit() {
-    if (redoStack.length === 0) return;
-    const op = redoStack[redoStack.length - 1];
-    setRedoStack((s) => s.slice(0, -1));
-    if (await runEdit(op)) {
-      setUndoStack((u) => [...u, op]);
+    if (histFuture.length === 0) return;
+    const entry = histFuture[histFuture.length - 1];
+    setHistFuture((f) => f.slice(0, -1));
+    if (await applyHist(entry)) {
+      setHistStack((s) => [...s, entry]);
       toast.success("Возвращено");
     } else {
-      setRedoStack((s) => [...s, op]);
+      setHistFuture((f) => [...f, entry]);
     }
   }
 
   const undoRef = useRef(undoEdit);
   const redoRef = useRef(redoEdit);
-  undoRef.current = undoEdit;
-  redoRef.current = redoEdit;
+  useEffect(() => {
+    undoRef.current = undoEdit;
+    redoRef.current = redoEdit;
+  });
 
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -369,7 +454,6 @@ export function ScheduleEditPage() {
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (!versionId) {
@@ -476,7 +560,7 @@ export function ScheduleEditPage() {
               size="icon"
               className="h-8 w-8"
               onClick={undoEdit}
-              disabled={undoStack.length === 0}
+              disabled={histStack.length === 0}
               title="Отменить (⌘Z)"
             >
               <Undo2 className="h-4 w-4" />
@@ -486,7 +570,7 @@ export function ScheduleEditPage() {
               size="icon"
               className="h-8 w-8"
               onClick={redoEdit}
-              disabled={redoStack.length === 0}
+              disabled={histFuture.length === 0}
               title="Вернуть (⌘⇧Z)"
             >
               <Redo2 className="h-4 w-4" />
@@ -693,7 +777,17 @@ export function ScheduleEditPage() {
                                       }
                                     >
                                       <X className="h-3 w-3 mr-1" />
-                                      Убрать
+                                      Убрать из черновика
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className="w-full justify-start text-xs h-7"
+                                      onClick={() =>
+                                        toggleFix(d, p.id, person, !isFixed)
+                                      }
+                                    >
+                                      {isFixed ? "🔓 Снять фикс" : "🔒 Зафиксировать для генерации"}
                                     </Button>
                                     {available.length > 0 && (
                                       <>
@@ -703,8 +797,44 @@ export function ScheduleEditPage() {
                                         {available.map((e) => {
                                           const replStat = getStat(
                                             e.name,
-                                            p.shiftHours
+                                            p.shiftHours,
                                           );
+                                          if (p.shiftHours === 24) {
+                                            return (
+                                              <div key={e.id} className="space-y-0.5">
+                                                <p className="text-[10px] font-medium pt-1">
+                                                  {e.name}
+                                                </p>
+                                                {KIND_LABELS.map(({ key, label }) => (
+                                                  <Button
+                                                    key={key}
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="w-full justify-between text-xs h-auto py-1"
+                                                    onClick={() =>
+                                                      doEdit(
+                                                        d,
+                                                        p.id,
+                                                        "swap",
+                                                        person,
+                                                        formatScheduleLabel(
+                                                          e.name,
+                                                          p.shiftHours,
+                                                          key,
+                                                        ),
+                                                      )
+                                                    }
+                                                  >
+                                                    <span className="flex items-center gap-1 min-w-0">
+                                                      <ArrowLeftRight className="h-3 w-3 shrink-0" />
+                                                      <span className="truncate">{label}</span>
+                                                    </span>
+                                                    <HourBadge stat={replStat} />
+                                                  </Button>
+                                                ))}
+                                              </div>
+                                            );
+                                          }
                                           return (
                                             <Button
                                               key={e.id}
@@ -746,6 +876,40 @@ export function ScheduleEditPage() {
                                 <div className="space-y-0.5">
                                   {available.map((e) => {
                                     const addStat = getStat(e.name, p.shiftHours);
+                                    if (p.shiftHours === 24) {
+                                      return (
+                                        <div key={e.id} className="mb-2">
+                                          <p className="text-[10px] font-medium">{e.name}</p>
+                                          {KIND_LABELS.map(({ key, label }) => (
+                                            <Button
+                                              key={key}
+                                              variant="ghost"
+                                              size="sm"
+                                              className="w-full justify-between text-xs h-auto py-1"
+                                              onClick={() =>
+                                                doEdit(
+                                                  d,
+                                                  p.id,
+                                                  "assign",
+                                                  null,
+                                                  formatScheduleLabel(
+                                                    e.name,
+                                                    p.shiftHours,
+                                                    key,
+                                                  ),
+                                                )
+                                              }
+                                            >
+                                              <span className="flex items-center gap-1 min-w-0">
+                                                <Plus className="h-3 w-3 shrink-0" />
+                                                <span className="truncate">{label}</span>
+                                              </span>
+                                              <HourBadge stat={addStat} />
+                                            </Button>
+                                          ))}
+                                        </div>
+                                      );
+                                    }
                                     return (
                                       <Button
                                         key={e.id}

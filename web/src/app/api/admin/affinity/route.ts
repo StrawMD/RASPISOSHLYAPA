@@ -88,8 +88,11 @@ export async function PATCH(req: NextRequest) {
           ),
         )
       : [];
-    const postPreferences = cleanPostPrefs(row.postPreferences, validPosts);
-    const postShiftPrefs = cleanShiftPrefs(row.postShiftPrefs, validPosts);
+    // Предпочтения держим только для допущенных постов: запрет (avoid_hard)
+    // на недопущенном посту бессмысленен и стал бы stale.
+    const allowedSet = new Set(allowedPosts);
+    const postPreferences = cleanPostPrefs(row.postPreferences, allowedSet);
+    const postShiftPrefs = cleanShiftPrefs(row.postShiftPrefs, allowedSet);
 
     // modalities = уникальные модальности допущенных постов.
     const modalities = Array.from(

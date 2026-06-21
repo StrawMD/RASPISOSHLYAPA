@@ -6,6 +6,7 @@ import { computeTenure } from "@/lib/seniority";
 import { prismaSchemaHint } from "@/lib/prisma-schema-hint";
 import { validateFixedSlots } from "@/lib/validate-fixed-slots";
 import { clampRates, workNormHours, isPartTime } from "@/lib/rates";
+import { mergeSolverConfig } from "@/lib/solver-config";
 
 function safeJson<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest) {
     body;
   const ignoreFixedSlots = Boolean(body.ignoreFixedSlots);
   // По умолчанию генерация идёт в режиме релаксации: смены, которые нельзя
-  // закрыть без нарушения предпочтений/правил (в т.ч. потолка ночных 30%),
+  // закрыть без нарушения предпочтений/правил (в т.ч. потолка доли ночных),
   // остаются ПУСТЫМИ и помечаются для ручного заполнения. Полное жёсткое
   // покрытие можно запросить явным relax:false.
   const relax = body.relax !== false;
@@ -415,13 +416,21 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Веса целевой функции из настроек (если заданы); иначе дефолты в солвере.
-  const weightsSetting = await prisma.setting.findUnique({
-    where: { key: "solverWeights" },
-  });
+  // Веса и общий конфиг солвера из настроек.
+  const [weightsSetting, configSetting] = await Promise.all([
+    prisma.setting.findUnique({ where: { key: "solverWeights" } }),
+    prisma.setting.findUnique({ where: { key: "solverConfig" } }),
+  ]);
   const solverWeights = weightsSetting
     ? safeJson<Record<string, number>>(weightsSetting.value, {})
     : {};
+  const solverConfig = mergeSolverConfig(
+    configSetting
+      ? safeJson(configSetting.value, null)
+      : null,
+  );
+  const effectiveTimeLimit = timeLimit ?? solverConfig.defaultTimeLimitSeconds;
+  const nightShareCapPercent = solverConfig.nightShareCapPercent;
 
   /** Актуальные фиксы из БД (не только снимок в начале запроса). */
   let fixedSlotsForSolver:
@@ -514,7 +523,8 @@ export async function POST(req: NextRequest) {
     shiftPreferences,
     shiftTimeModes,
     seniorityFilter: seniorityFilter ?? false,
-    timeLimit: timeLimit ?? 120,
+    timeLimit: effectiveTimeLimit,
+    nightShareCapPercent,
     weekdayPrefs,
     weekendPrefs,
     dowPrefs,
@@ -559,7 +569,8 @@ export async function POST(req: NextRequest) {
         employeeHours: JSON.stringify(result.employeeHours),
         solverParams: JSON.stringify({
           normHours: nh,
-          timeLimit,
+          timeLimit: effectiveTimeLimit,
+          nightShareCapPercent,
           seniorityFilter,
           ignoreFixedSlots,
           fixedSlotsApplied: fixedSlotsCount,

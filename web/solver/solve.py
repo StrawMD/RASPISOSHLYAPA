@@ -81,7 +81,8 @@ def main():
     shift_prefs = input_data.get("shiftPreferences", {})
     shift_time_modes = input_data.get("shiftTimeModes", {})
     seniority_filter = input_data.get("seniorityFilter", False)
-    time_limit = input_data.get("timeLimit", 120)
+    time_limit = input_data.get("timeLimit", 900)
+    night_share_cap_percent = input_data.get("nightShareCapPercent", 50)
     weekday_prefs = input_data.get("weekdayPrefs", {})
     weekend_prefs = input_data.get("weekendPrefs", {})
     dow_prefs = input_data.get("dowPrefs", {})
@@ -131,6 +132,7 @@ def main():
             weights=weights,
             fixed_slots=fixed_slots if fixed_slots else None,
             relax=relax,
+            night_share_cap_percent=night_share_cap_percent,
         )
 
     solver = build_solver(relax=relax_requested)

@@ -31,8 +31,6 @@ type InputEmployee = {
   postShiftPrefs: Record<string, Record<string, string>>;
 };
 
-const NONE = "__none";
-
 type LevelMeta = {
   label: string; // полная подпись в выпадающем меню
   short: string; // подпись на 12ч-триггере
@@ -87,15 +85,6 @@ const LEVEL_META: Record<string, LevelMeta> = {
   },
 };
 
-const NONE_META: LevelMeta = {
-  label: "Не допущен",
-  short: "Не допущен",
-  tiny: "—",
-  dot: "",
-  trigger: "ring-dashed ring-border/40 hover:bg-muted/40",
-  text: "text-muted-foreground/40",
-};
-
 const LEVEL_ORDER = [
   "prefer_strong",
   "prefer",
@@ -111,7 +100,6 @@ const SHIFT_KINDS: { key: Kind; label: string }[] = [
 ];
 
 function metaOf(value: string): LevelMeta {
-  if (value === NONE) return NONE_META;
   return LEVEL_META[value] ?? LEVEL_META.neutral;
 }
 
@@ -119,18 +107,14 @@ function metaOf(value: string): LevelMeta {
 function LevelSelect({
   value,
   onChange,
-  allowNone = false,
   compact = false,
 }: {
   value: string;
   onChange: (v: string) => void;
-  allowNone?: boolean;
   compact?: boolean;
 }) {
   const meta = metaOf(value);
-  const options: string[] = allowNone
-    ? [NONE, ...LEVEL_ORDER]
-    : [...LEVEL_ORDER];
+  const options: string[] = [...LEVEL_ORDER];
 
   return (
     <SelectPrimitive.Root
@@ -424,24 +408,11 @@ export function AffinityMatrix({
     );
   }
 
-  // 12ч-пост: один селект с «не допущен» + 5 уровней.
+  // 12ч-пост: уровень предпочтения (только для допущенных постов).
   function setRegularCell(id: string, postId: string, value: string) {
     patchRow(id, (r) => {
-      if (value === NONE) {
-        r.allowed[postId] = false;
-        delete r.postPrefs[postId];
-      } else {
-        r.allowed[postId] = true;
-        if (value === "neutral") delete r.postPrefs[postId];
-        else r.postPrefs[postId] = value;
-      }
-    });
-  }
-
-  function setAllowed(id: string, postId: string, on: boolean) {
-    patchRow(id, (r) => {
-      r.allowed[postId] = on;
-      if (!on) delete r.shiftPrefs[postId];
+      if (value === "neutral") delete r.postPrefs[postId];
+      else r.postPrefs[postId] = value;
     });
   }
 
@@ -459,12 +430,24 @@ export function AffinityMatrix({
     setSaving(true);
     try {
       const payload = {
-        employees: rows.map((r) => ({
-          id: r.id,
-          allowedPosts: Object.keys(r.allowed).filter((p) => r.allowed[p]),
-          postPreferences: r.postPrefs,
-          postShiftPrefs: r.shiftPrefs,
-        })),
+        employees: rows.map((r) => {
+          const allowedPosts = Object.keys(r.allowed).filter((p) => r.allowed[p]);
+          const allowedSet = new Set(allowedPosts);
+          const postPreferences: Record<string, string> = {};
+          for (const [pid, lvl] of Object.entries(r.postPrefs)) {
+            if (allowedSet.has(pid)) postPreferences[pid] = lvl;
+          }
+          const postShiftPrefs: Record<string, Record<string, string>> = {};
+          for (const [pid, inner] of Object.entries(r.shiftPrefs)) {
+            if (allowedSet.has(pid)) postShiftPrefs[pid] = inner;
+          }
+          return {
+            id: r.id,
+            allowedPosts,
+            postPreferences,
+            postShiftPrefs,
+          };
+        }),
       };
       const res = await fetch("/api/admin/affinity", {
         method: "PATCH",
@@ -601,62 +584,59 @@ export function AffinityMatrix({
                 </th>
 
                 {posts.map((p) => {
-                  if (p.shiftHours === 24) {
-                    const allowed = !!r.allowed[p.id];
+                  const allowed = !!r.allowed[p.id];
+
+                  // Не допущен к посту (модальность/допуск) — пустая
+                  // приглушённая ячейка без селекта. Допуск задаётся в
+                  // карточке сотрудника, а не здесь.
+                  if (!allowed) {
                     return (
                       <td
                         key={p.id}
-                        className="border-b border-r px-1 py-1 align-middle"
+                        className="border-b border-r bg-muted/20 px-1 py-1 align-middle"
+                        title="Не допущен к этому аппарату"
                       >
-                        <div className="flex items-center gap-1.5">
-                          <label
-                            className="flex items-center"
-                            title="Допуск к посту"
-                          >
-                            <input
-                              type="checkbox"
-                              checked={allowed}
-                              onChange={(e) =>
-                                setAllowed(r.id, p.id, e.target.checked)
-                              }
-                              className="h-3.5 w-3.5 cursor-pointer accent-emerald-600"
-                            />
-                          </label>
-                          <div
-                            className={cn(
-                              "grid flex-1 grid-cols-3 gap-1",
-                              !allowed && "opacity-40 pointer-events-none",
-                            )}
-                          >
-                            {SHIFT_KINDS.map(({ key, label }) => {
-                              const lvl = r.shiftPrefs[p.id]?.[key] ?? "neutral";
-                              return (
-                                <div
-                                  key={key}
-                                  className="flex flex-col items-stretch gap-0.5"
-                                >
-                                  <span className="text-center text-[9px] leading-none text-muted-foreground">
-                                    {label}
-                                  </span>
-                                  <LevelSelect
-                                    value={lvl}
-                                    compact
-                                    onChange={(v) =>
-                                      setShiftCell(r.id, p.id, key, v)
-                                    }
-                                  />
-                                </div>
-                              );
-                            })}
-                          </div>
+                        <div className="flex h-7 items-center justify-center text-muted-foreground/30">
+                          —
                         </div>
                       </td>
                     );
                   }
 
-                  // 12ч-пост: один селект с «не допущен».
-                  const allowed = !!r.allowed[p.id];
-                  const value = allowed ? r.postPrefs[p.id] ?? "neutral" : NONE;
+                  if (p.shiftHours === 24) {
+                    return (
+                      <td
+                        key={p.id}
+                        className="border-b border-r px-1 py-1 align-middle"
+                      >
+                        <div className="grid grid-cols-3 gap-1">
+                          {SHIFT_KINDS.map(({ key, label }) => {
+                            const lvl = r.shiftPrefs[p.id]?.[key] ?? "neutral";
+                            return (
+                              <div
+                                key={key}
+                                className="flex flex-col items-stretch gap-0.5"
+                              >
+                                <span className="text-center text-[9px] leading-none text-muted-foreground">
+                                  {label}
+                                </span>
+                                <LevelSelect
+                                  value={lvl}
+                                  compact
+                                  onChange={(v) =>
+                                    setShiftCell(r.id, p.id, key, v)
+                                  }
+                                />
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </td>
+                    );
+                  }
+
+                  // 12ч-пост: только уровень предпочтения (без «не допущен»).
+                  const value = r.postPrefs[p.id] ?? "neutral";
                   return (
                     <td
                       key={p.id}
@@ -664,7 +644,6 @@ export function AffinityMatrix({
                     >
                       <LevelSelect
                         value={value}
-                        allowNone
                         onChange={(v) => setRegularCell(r.id, p.id, v)}
                       />
                     </td>

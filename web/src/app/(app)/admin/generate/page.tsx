@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -17,6 +17,7 @@ import {
 } from "@/components/ui/select";
 import { toast } from "sonner";
 import { Sparkles, Loader2 } from "lucide-react";
+import { DEFAULT_SOLVER_CONFIG } from "@/lib/solver-config";
 
 const MONTH_NAMES = [
   "Январь", "Февраль", "Март", "Апрель", "Май", "Июнь",
@@ -28,7 +29,8 @@ export default function GeneratePage() {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [normHours, setNormHours] = useState(120);
-  const [timeLimit, setTimeLimit] = useState(120);
+  const [timeLimit, setTimeLimit] = useState(900);
+  const [nightShareCapPercent, setNightShareCapPercent] = useState(50);
   const [seniorityFilter, setSeniorityFilter] = useState(false);
   const [ignoreFixedSlots, setIgnoreFixedSlots] = useState(false);
   const [versionName, setVersionName] = useState("");
@@ -44,6 +46,20 @@ export default function GeneratePage() {
     emergencyOvertimeTotal?: number;
   } | null>(null);
   const [diagnostics, setDiagnostics] = useState<string[] | null>(null);
+
+  useEffect(() => {
+    fetch("/api/admin/settings")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.solverConfig?.defaultTimeLimitSeconds) {
+          setTimeLimit(d.solverConfig.defaultTimeLimitSeconds);
+        }
+        if (d?.solverConfig?.nightShareCapPercent) {
+          setNightShareCapPercent(d.solverConfig.nightShareCapPercent);
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   async function handleGenerate(relax = true) {
     setLoading(true);
@@ -187,8 +203,16 @@ export default function GeneratePage() {
                 value={timeLimit}
                 onChange={(e) => setTimeLimit(parseInt(e.target.value))}
                 min={10}
-                max={600}
+                max={1800}
               />
+              <p className="text-xs text-muted-foreground">
+                На сервере одно ядро — полный прогон обычно 10–15 мин (900 сек).
+                Для быстрой проверки можно поставить меньше; дефолт задаётся в{" "}
+                <Link href="/admin/settings" className="underline">
+                  настройках
+                </Link>
+                .
+              </p>
             </div>
 
             <div className="space-y-1.5">
@@ -243,9 +267,9 @@ export default function GeneratePage() {
           </Button>
           <p className="text-xs text-muted-foreground">
             Солвер уважает все предпочтения и правила (в т.ч. потолок ночных
-            ≤30%). Смены, которые нельзя закрыть без нарушения предпочтений,
-            он оставит <strong>пустыми</strong> и покажет списком — их
-            добавляете вручную в редакторе.
+            ≤{nightShareCapPercent}%). Смены, которые нельзя закрыть без нарушения
+            предпочтений, он оставит <strong>пустыми</strong> и покажет
+            списком — их добавляете вручную в редакторе.
           </p>
         </CardContent>
       </Card>

@@ -1,4 +1,5 @@
 import { exec } from "child_process";
+import { DEFAULT_SOLVER_CONFIG } from "@/lib/solver-config";
 import { writeFile, unlink } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -59,6 +60,8 @@ export interface SolverInput {
   shiftPreferences?: Record<string, Record<string, boolean | null>>;
   shiftTimeModes?: Record<string, string>;
   seniorityFilter?: boolean;
+  /** Жёсткий потолок доли ночных смен у сотрудника, % (по умолчанию 50). */
+  nightShareCapPercent?: number;
   timeLimit?: number;
   weekdayPrefs?: Record<string, string>;
   weekendPrefs?: Record<string, string>;
@@ -133,7 +136,10 @@ export async function runSolver(input: SolverInput): Promise<SolverOutput> {
         `python3 solve.py "${inputPath}"`,
         {
           cwd: solverDir,
-          timeout: (input.timeLimit ?? 120) * 1000 + 30000,
+          timeout:
+            (input.timeLimit ?? DEFAULT_SOLVER_CONFIG.defaultTimeLimitSeconds) *
+              1000 +
+            30000,
           maxBuffer: 10 * 1024 * 1024,
         },
         (error, stdout, stderr) => {

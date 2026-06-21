@@ -104,6 +104,7 @@ class ScheduleSolver:
         weights: dict[str, int] | None = None,
         fixed_slots: dict[int, dict[str, list[str]]] | None = None,
         relax: bool = False,
+        night_share_cap_percent: int = 50,
     ):
         self.posts = posts
         self.employees = employees
@@ -126,6 +127,10 @@ class ScheduleSolver:
         # с большим штрафом), солвер всегда выдаёт черновик + список «дыр».
         self.relax = relax
         self.shortfalls: list[tuple] = []
+        # Жёсткий потолок доли ночных (по умолчанию 50%).
+        cap = max(1, min(100, int(night_share_cap_percent)))
+        self._night_share_num = 100
+        self._night_share_den = cap
 
         self.W = dict(DEFAULT_WEIGHTS)
         if weights:
@@ -819,22 +824,18 @@ class ScheduleSolver:
                     self.model.add(sum(nvars) <= mn)
 
     def _night_share_cap(self):
-        """ЖЁСТКИЙ потолок ДОЛИ ночных (н) смен в личном графике (≤30%).
+        """ЖЁСТКИЙ потолок ДОЛИ ночных (н) смен в личном графике.
 
-        Раньше ночные концентрировались у нескольких людей, причём у них почти
-        все смены были ночными (условно 9 ночных и 1 дневная). Теперь доля
-        ночных жёстко ограничена ~30% всех смен сотрудника: лишние ночные просто
-        НЕ ставятся (в relax-режиме слот остаётся пустым на ручное заполнение).
-        Линейная форма доли: 10·night ≤ 3·total ⟺ night ≤ 0.3·total.
+        Доля ночных ограничена настраиваемым процентом (по умолчанию 50%):
+        линейная форма: 100·night ≤ cap·total.
 
-        Исключение: если админ вручную зафиксировал сотруднику ночные смены
-        (фикс-слоты), жёсткий потолок к нему НЕ применяем (фикс важнее правила) —
-        иначе месяц станет нерешаемым.
+        Исключение: если админ зафиксировал сотруднику ночные смены,
+        жёсткий потолок к нему НЕ применяем.
 
-        Дополнительно (если включён вес night_share>0) — мягкий выпуклый штраф,
-        который РАЗМАЗЫВАЕТ ночные между многими людьми (k-я ночная дороже).
+        Дополнительно (если night_share>0) — мягкий выпуклый штраф.
         """
-        NUM, DEN = 10, 3  # 10/3 ≈ 3.33 ⟹ доля ночных ≤ 30%
+        NUM = self._night_share_num
+        DEN = self._night_share_den
         fixed_n = getattr(self, "_fixed_n_by_e", {})
         w = self.W.get("night_share", 0)
         for e in range(len(self.employees)):
@@ -848,12 +849,12 @@ class ScheduleSolver:
                 continue
             night = sum(nvars)
             total = sum(total_vars)
-            # (0) ЖЁСТКИЙ потолок ≤30% (кроме тех, кому ночи зафиксировал админ).
+            # (0) Жёсткий потолок доли ночных (кроме зафиксированных).
             if not fixed_n.get(e):
                 self.model.add(NUM * night <= DEN * total)
             if not w:
                 continue
-            # (1) Доля: штраф за ночные сверх ~30% всех смен сотрудника
+            # (1) Доля: штраф за ночные сверх настроенного процента
             #     (для зафиксированных, где жёсткого потолка нет, всё равно давит).
             excess = self.model.new_int_var(0, NUM * len(nvars), f"nshare_{e}")
             self.model.add(excess >= NUM * night - DEN * total)
@@ -1496,7 +1497,7 @@ class ScheduleSolver:
     #  Запуск
     # ------------------------------------------------------------------
 
-    def solve(self, time_limit_seconds: int = 120) -> dict | None:
+    def solve(self, time_limit_seconds: int = 900) -> dict | None:
         if getattr(self, "_fixed_slot_errors", None):
             _log("\n✗ Фиксированные слоты:")
             for msg in self._fixed_slot_errors:
