@@ -35,6 +35,8 @@ model Employee {
   modalities       String   @default("[]")
   can24h           Boolean  @default(false)
   postPreferences  String   @default("{}")
+  /** JSON: базовые посменные (с/д/н) предпочтения на суточных постах. { postId: { full|day|night: level } } */
+  postShiftPrefs   String   @default("{}")
   /** Очерёдность смен по умолчанию: avoid | neutral | prefer_2 | prefer_3 | prefer_4 */
   consecutivePref  String   @default("avoid")
   /** Жёсткое мед/правовое ограничение: none | no_night | no_24h | day_only */

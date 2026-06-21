@@ -357,6 +357,13 @@ class ScheduleSolver:
                 {pid for pid, lvl in pp_raw.items() if lvl == "avoid_hard"}
                 if isinstance(pp_raw, dict) else set()
             )
+            # Посменные (с/д/н) предпочтения: уровень "avoid_hard" («Вообще не
+            # ставить») — ЖЁСТКИЙ запрет конкретной смены на суточном посту
+            # (переменную не создаём). Заменяет прежний флаг can_24h: допуск к
+            # суткам/ночам теперь выражается через эти запреты в матрице.
+            psp_raw = self.post_shift_prefs.get(emp.name, {})
+            if not isinstance(psp_raw, dict):
+                psp_raw = {}
 
             for d in self.config.days:
                 if d in emp_blocked and d not in emp_fixed_days:
@@ -371,10 +378,16 @@ class ScheduleSolver:
                         continue
 
                     if p in self._24h_pidxs:
+                        post_kind = psp_raw.get(post.id, {})
+                        if not isinstance(post_kind, dict):
+                            post_kind = {}
+                        ban_full = post_kind.get("full") == "avoid_hard"
+                        ban_day = post_kind.get("day") == "avoid_hard"
+                        ban_night = post_kind.get("night") == "avoid_hard"
+
                         # Full-shift (с) eligibility. Blocked by: стаж-фильтр,
-                        # легаси-флаг avoid, отсутствие допуска на сутки
-                        # (can_24h=False) или мед-ограничение. "only_full"
-                        # сохраняет xf — в этом режиме блокируются прочие смены.
+                        # легаси-флаг avoid, жёсткий запрет «нельзя» по сменам
+                        # (матрица) или мед-ограничение. "only_full" сохраняет xf.
                         can_full = True
                         # Фильтр суточных по ОБЩЕМУ стажу в профессии (career_years),
                         # а не только по стажу в этой больнице.
@@ -382,29 +395,28 @@ class ScheduleSolver:
                             can_full = False
                         if sp.get("pref_24h_full") is False:
                             can_full = False
-                        if not getattr(emp, "can_24h", True):
+                        if ban_full:
                             can_full = False
                         if no_full:
                             can_full = False
 
                         # Жёсткие блокировки: легаси avoid, режим only_full,
-                        # либо мед-ограничение на ночь. Мягкие режимы
+                        # мед-ограничение, либо «нельзя» в матрице. Мягкие режимы
                         # (prefer_full / prefer_day) — через штрафы.
                         block_day = (
                             sp.get("pref_24h_day") is False
                             or mode == "only_full"
+                            or ban_day
                         )
-                        # can_24h=False означает «нет допуска к суточным» — это
-                        # запрещает И полные сутки (с), И ночные (н) 12ч-смены на
-                        # суточном посту (см. AGENTS.md). Дневная (д) 12ч-смена —
-                        # обычная дневная работа, её не блокируем. Реальную приёмную
-                        # бригаду (Китова/Осипов/Костарев/Муравьёва/Сорокин) держим
-                        # допущенной через can24h=1 в БД, а не послаблением правила.
+                        # Дневная (д) 12ч-смена — обычная дневная работа.
+                        # Допуск к суткам (с) и ночам (н) теперь задаётся в матрице
+                        # уровнем «Вообще не ставить» (ban_full / ban_night), а не
+                        # отдельным флагом can_24h.
                         block_night = (
                             sp.get("pref_24h_night") is False
                             or mode == "only_full"
                             or no_night
-                            or not getattr(emp, "can_24h", True)
+                            or ban_night
                         )
 
                         # Фикс админа перекрывает блокировки для своей смены.
@@ -608,12 +620,23 @@ class ScheduleSolver:
                     self.model.add(sum(shifts) <= 1)
 
     def _rest_constraints(self):
-        """After full 24h (с): next day off.
-        After night (н): no full/day next day (night→night penalized by consecutive)."""
+        """Жёсткий отдых не менее одного дня:
+          • после суточной (с): весь следующий день выходной;
+          • после ночной (н): весь следующий день выходной — В ТОМ ЧИСЛЕ
+            запрещены ночь→ночь подряд (минимум 1 день отдыха, как после суток).
+
+        Пару дней пропускаем только если ОБА дня жёстко зафиксированы админом
+        (иначе фикс конфликтует с правилом и месяц станет нерешаемым). Если
+        зафиксирован лишь один из двух дней — правило применяем: свободный
+        соседний день корректно становится выходным."""
         days = self.config.days
+        fixed_days_by_emp = getattr(self, "_fixed_days_by_emp", {})
         for e in range(len(self.employees)):
+            fd = fixed_days_by_emp.get(e, set())
             for i in range(len(days) - 1):
                 d, dn = days[i], days[i + 1]
+                if d in fd and dn in fd:
+                    continue
 
                 for p in self._24h_pidxs:
                     if (e, d, p) in self.xf:
@@ -621,7 +644,7 @@ class ScheduleSolver:
                             self.model.add(self.xf[e, d, p] + nv <= 1)
 
                     if (e, d, p) in self.xn:
-                        for nv in self._dayfull_vars(e, dn):
+                        for nv in self._all_vars_day(e, dn):
                             self.model.add(self.xn[e, d, p] + nv <= 1)
 
     def _max_hours(self):

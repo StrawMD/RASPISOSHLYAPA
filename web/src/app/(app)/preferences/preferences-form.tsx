@@ -64,15 +64,6 @@ const PREF3 = [
   { value: "avoid", label: "Лучше не ставить" },
 ];
 
-// Типы смен на суточном посту.
-const SHIFT_KINDS = [
-  { key: "full", label: "Сутки (с)" },
-  { key: "day", label: "День (д)" },
-  { key: "night", label: "Ночь (н)" },
-] as const;
-
-type ShiftKind = (typeof SHIFT_KINDS)[number]["key"];
-
 // Предпочтения по аппаратам — 5 градаций. Центр «нейтрально».
 // Крайний «avoid_hard» = жёсткий запрет (солвер ставит только в крайнем
 // случае; админ может переопределить вручную/фикс-слотом).
@@ -101,14 +92,6 @@ type ShiftTimeMode =
   | "neutral"
   | "prefer_day"
   | "prefer_night";
-
-const SHIFT_TIME_MODE_OPTIONS: { value: ShiftTimeMode; label: string }[] = [
-  { value: "only_full", label: "Только суточные" },
-  { value: "prefer_full", label: "Предпочитаю суточные" },
-  { value: "neutral", label: "Нейтрально" },
-  { value: "prefer_day", label: "Предпочитаю дневные" },
-  { value: "prefer_night", label: "Предпочитаю ночные" },
-];
 
 function isShiftTimeMode(v: unknown): v is ShiftTimeMode {
   return (
@@ -164,10 +147,6 @@ function prefLabel(v: string) {
       ?.label ?? v;
   const color = PREF_COLOR[v] ?? "";
   return <span className={color}>{label}</span>;
-}
-
-function shiftTimeModeLabel(v: string) {
-  return SHIFT_TIME_MODE_OPTIONS.find((o) => o.value === v)?.label ?? v;
 }
 
 // Лейблы для триггеров селектов (Base UI отображает «сырое» value, если не
@@ -544,19 +523,6 @@ export function PreferencesForm({
       const next = new Set(prev);
       if (next.has(idx)) next.delete(idx);
       else next.add(idx);
-      return next;
-    });
-  }
-
-  function setPostShiftPref(postId: string, kind: ShiftKind, v: string) {
-    if (readOnly) return;
-    setPostShiftPrefs((prev) => {
-      const cur = { ...(prev[postId] ?? {}) };
-      if (v === "neutral") delete cur[kind];
-      else cur[kind] = v;
-      const next = { ...prev };
-      if (Object.keys(cur).length === 0) delete next[postId];
-      else next[postId] = cur;
       return next;
     });
   }
@@ -1113,87 +1079,18 @@ export function PreferencesForm({
         </CardContent>
       </Card>
 
-      {has24h && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Предпочтения по сменам</CardTitle>
-            <CardDescription>
-              Какие смены вы предпочитаете в целом — полные сутки (24ч),
-              12-часовые дневные или ночные.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Select
-              value={shiftTimeMode}
-              onValueChange={(v) => v && setShiftTimeMode(v as ShiftTimeMode)}
-              disabled={readOnly}
-            >
-              <SelectTrigger className="w-full sm:w-80">
-                <SelectValue>{shiftTimeModeLabel}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {SHIFT_TIME_MODE_OPTIONS.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>
-                    {o.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <div className="mt-2 text-xs text-muted-foreground leading-relaxed">
-              {shiftTimeMode === "only_full" && (
-                <>
-                  Вам будут ставить <strong>только полные сутки</strong>
-                  &nbsp;— никаких 12-часовых дневных или ночных смен.
-                </>
-              )}
-              {shiftTimeMode === "prefer_full" && (
-                <>
-                  Солвер будет стараться отдавать вам{" "}
-                  <strong>полные суточные смены</strong>, но при необходимости
-                  возможны 12-часовые.
-                </>
-              )}
-              {shiftTimeMode === "neutral" && (
-                <>Без особых предпочтений — как удобнее графику.</>
-              )}
-              {shiftTimeMode === "prefer_day" && (
-                <>
-                  Солвер будет стараться ставить вас на{" "}
-                  <strong>12-часовые дневные смены</strong> — и на обычных, и на
-                  суточных постах (избегая полных суток и ночных).
-                </>
-              )}
-              {shiftTimeMode === "prefer_night" && (
-                <>
-                  Солвер будет стараться отдавать вам{" "}
-                  <strong>ночные смены</strong> на суточных постах (избегая
-                  полных суток и дневных).
-                </>
-              )}
-            </div>
-            <p className="mt-2 text-[11px] text-muted-foreground">
-              Это общий ориентир. Точнее — по каждому суточному посту отдельно
-              (с/д/н) можно указать ниже, в «Предпочтениях по аппаратам».
-            </p>
-          </CardContent>
-        </Card>
-      )}
-
       {visiblePosts.length > 0 && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">
-              Предпочтения по аппаратам
-            </CardTitle>
+            <CardTitle className="text-base">Разнообразие аппаратов</CardTitle>
             <CardDescription>
-              «Вообще не ставить» — солвер не поставит вас на этот аппарат,
-              кроме крайнего случая (и админ может переопределить вручную). На
-              суточных постах можно указать отдельно по сменам (сутки / день /
-              ночь).
+              Предпочтения «на каком аппарате работать» теперь ведёт
+              администратор единым набором, поэтому из анкеты они убраны. Если у
+              вас есть пожелания по аппаратам — скажите составителю графика.
             </CardDescription>
           </CardHeader>
-          <CardContent className="space-y-1.5">
-            <label className="flex items-center gap-2 text-sm cursor-pointer pb-2">
+          <CardContent>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
               <Checkbox
                 checked={avoidSamePost}
                 disabled={readOnly}
@@ -1201,87 +1098,6 @@ export function PreferencesForm({
               />
               Не ставить меня на один и тот же аппарат подряд (хочу разнообразия, работать на разных аппаратах)
             </label>
-            {visiblePosts.map((post) =>
-              post.shiftHours === 24 ? (
-                <div
-                  key={post.id}
-                  className="rounded border px-3 py-2 text-sm space-y-1.5"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="flex-1 font-medium">{post.name}</span>
-                    <Badge variant="outline" className="text-[10px] shrink-0">
-                      суточный
-                    </Badge>
-                  </div>
-                  {SHIFT_KINDS.map(({ key, label }) => (
-                    <div key={key} className="flex items-center gap-3">
-                      <span className="flex-1 text-xs text-muted-foreground">
-                        {label}
-                      </span>
-                      <Select
-                        value={postShiftPrefs[post.id]?.[key] ?? "neutral"}
-                        onValueChange={(v) =>
-                          v && setPostShiftPref(post.id, key, v)
-                        }
-                        disabled={readOnly}
-                      >
-                        <SelectTrigger className="w-44 h-7 text-xs">
-                          <SelectValue>{prefLabel}</SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                          {POST_PREF5.map((o) => (
-                            <SelectItem
-                              key={o.value}
-                              value={o.value}
-                              className="text-xs"
-                            >
-                              <span className={PREF_COLOR[o.value] ?? ""}>
-                                {o.label}
-                              </span>
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div
-                  key={post.id}
-                  className="flex items-center gap-3 rounded border px-3 py-1.5 text-sm"
-                >
-                  <span className="flex-1">{post.name}</span>
-                  <Badge variant="outline" className="text-[10px] shrink-0">
-                    {post.shiftHours}ч
-                  </Badge>
-                  <Select
-                    value={postPrefs[post.id] ?? "neutral"}
-                    onValueChange={(v) => {
-                      if (!v) return;
-                      setPostPrefs((p) => {
-                        const next = { ...p, [post.id]: v };
-                        if (v === "neutral") delete next[post.id];
-                        return next;
-                      });
-                    }}
-                    disabled={readOnly}
-                  >
-                    <SelectTrigger className="w-44 h-7 text-xs">
-                      <SelectValue>{prefLabel}</SelectValue>
-                    </SelectTrigger>
-                    <SelectContent>
-                      {POST_PREF5.map((o) => (
-                        <SelectItem key={o.value} value={o.value}>
-                          <span className={PREF_COLOR[o.value] ?? ""}>
-                            {o.label}
-                          </span>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              ),
-            )}
           </CardContent>
         </Card>
       )}

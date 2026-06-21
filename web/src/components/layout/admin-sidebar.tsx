@@ -16,11 +16,13 @@ import {
   ArrowLeft,
   Pin,
   SlidersHorizontal,
+  Grid3x3,
 } from "lucide-react";
 
 const ADMIN_NAV = [
   { href: "/admin", label: "Обзор", icon: ClipboardList, exact: true },
   { href: "/admin/preferences", label: "Сбор предпочтений", icon: ClipboardCheck },
+  { href: "/admin/affinity", label: "Матрица аппаратов", icon: Grid3x3 },
   { href: "/admin/generate", label: "Генерация", icon: Sparkles },
   { href: "/admin/settings", label: "Веса солвера", icon: SlidersHorizontal },
   { href: "/admin/fixed-slots", label: "Фикс. слоты", icon: Pin },

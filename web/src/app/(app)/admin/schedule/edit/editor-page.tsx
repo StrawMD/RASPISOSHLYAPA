@@ -11,7 +11,7 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { toast } from "sonner";
-import { Loader2, Plus, X, ArrowLeftRight, History, AlertTriangle } from "lucide-react";
+import { Loader2, Plus, X, ArrowLeftRight, History, AlertTriangle, Undo2, Redo2 } from "lucide-react";
 import {
   analyzeSchedule,
   type ComplianceEmployee,
@@ -38,6 +38,13 @@ type PrefInfo = CompliancePrefs & {
   maxNights: number | null;
 };
 type Schedule = Record<string, Record<string, string[]>>;
+type EditOp = {
+  day: number;
+  postId: string;
+  editType: string;
+  oldValue: string | null;
+  newValue: string | null;
+};
 type EditLog = {
   id: string;
   day: number;
@@ -159,6 +166,8 @@ export function ScheduleEditPage() {
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [prefsByName, setPrefsByName] = useState<Record<string, PrefInfo>>({});
   const [recentEdits, setRecentEdits] = useState<EditLog[]>([]);
+  const [undoStack, setUndoStack] = useState<EditOp[]>([]);
+  const [redoStack, setRedoStack] = useState<EditOp[]>([]);
   const [loading, setLoading] = useState(true);
   const [showLog, setShowLog] = useState(false);
   const [relaxed, setRelaxed] = useState(false);
@@ -278,28 +287,90 @@ export function ScheduleEditPage() {
     );
   }, [schedule, posts, employees, prefsByName, version, fixedSlots]);
 
-  async function doEdit(
-    day: number,
-    postId: string,
-    editType: string,
-    oldValue: string | null,
-    newValue: string | null
-  ) {
+  async function runEdit(op: EditOp): Promise<boolean> {
     const res = await fetch("/api/schedule/edit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ versionId, day, postId, editType, oldValue, newValue }),
+      body: JSON.stringify({ versionId, ...op }),
     });
     if (res.ok) {
       const data = await res.json();
       setSchedule(data.schedule);
       setEmployeeHours(data.employeeHours);
-      toast.success("Изменено");
       load();
-    } else {
-      toast.error("Ошибка");
+      return true;
+    }
+    toast.error("Ошибка");
+    return false;
+  }
+
+  function inverseOp(op: EditOp): EditOp {
+    if (op.editType === "assign")
+      return { ...op, editType: "remove", oldValue: op.newValue, newValue: null };
+    if (op.editType === "remove")
+      return { ...op, editType: "assign", oldValue: null, newValue: op.oldValue };
+    // swap A→B  ↔  swap B→A
+    return { ...op, oldValue: op.newValue, newValue: op.oldValue };
+  }
+
+  async function doEdit(
+    day: number,
+    postId: string,
+    editType: string,
+    oldValue: string | null,
+    newValue: string | null,
+  ) {
+    const op: EditOp = { day, postId, editType, oldValue, newValue };
+    if (await runEdit(op)) {
+      setUndoStack((s) => [...s, op]);
+      setRedoStack([]);
+      toast.success("Изменено");
     }
   }
+
+  async function undoEdit() {
+    if (undoStack.length === 0) return;
+    const op = undoStack[undoStack.length - 1];
+    setUndoStack((s) => s.slice(0, -1));
+    if (await runEdit(inverseOp(op))) {
+      setRedoStack((r) => [...r, op]);
+      toast.success("Отменено");
+    } else {
+      setUndoStack((s) => [...s, op]);
+    }
+  }
+
+  async function redoEdit() {
+    if (redoStack.length === 0) return;
+    const op = redoStack[redoStack.length - 1];
+    setRedoStack((s) => s.slice(0, -1));
+    if (await runEdit(op)) {
+      setUndoStack((u) => [...u, op]);
+      toast.success("Возвращено");
+    } else {
+      setRedoStack((s) => [...s, op]);
+    }
+  }
+
+  const undoRef = useRef(undoEdit);
+  const redoRef = useRef(redoEdit);
+  undoRef.current = undoEdit;
+  redoRef.current = redoEdit;
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (e.key.toLowerCase() !== "z") return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA")) return;
+      e.preventDefault();
+      if (e.shiftKey) redoRef.current();
+      else undoRef.current();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   if (!versionId) {
     return (
@@ -398,6 +469,28 @@ export function ScheduleEditPage() {
                 <X className="h-3.5 w-3.5" />
               </Button>
             )}
+          </div>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-8 w-8"
+              onClick={undoEdit}
+              disabled={undoStack.length === 0}
+              title="Отменить (⌘Z)"
+            >
+              <Undo2 className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="icon"
+              className="h-8 w-8"
+              onClick={redoEdit}
+              disabled={redoStack.length === 0}
+              title="Вернуть (⌘⇧Z)"
+            >
+              <Redo2 className="h-4 w-4" />
+            </Button>
           </div>
           <Badge variant={version.status === "published" ? "default" : "outline"}>
             {version.status === "published" ? "Опубликован" : version.status === "archived" ? "Архив" : "Черновик"}

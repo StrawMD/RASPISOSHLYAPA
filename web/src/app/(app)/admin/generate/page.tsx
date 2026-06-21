@@ -30,6 +30,7 @@ export default function GeneratePage() {
   const [normHours, setNormHours] = useState(120);
   const [timeLimit, setTimeLimit] = useState(120);
   const [seniorityFilter, setSeniorityFilter] = useState(false);
+  const [ignoreFixedSlots, setIgnoreFixedSlots] = useState(false);
   const [versionName, setVersionName] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<{
@@ -59,6 +60,7 @@ export default function GeneratePage() {
           normHours,
           timeLimit,
           seniorityFilter,
+          ignoreFixedSlots,
           versionName: versionName || undefined,
           relax,
         }),
@@ -205,6 +207,20 @@ export default function GeneratePage() {
               onCheckedChange={(c) => setSeniorityFilter(!!c)}
             />
             Суточные (с) только при общем стаже &ge; 5 лет
+          </label>
+
+          <label className="flex items-start gap-2 text-sm">
+            <Checkbox
+              checked={ignoreFixedSlots}
+              onCheckedChange={(c) => setIgnoreFixedSlots(!!c)}
+            />
+            <span>
+              Игнорировать фиксированные слоты
+              <span className="block text-xs text-muted-foreground">
+                Экспериментальный прогон: версия генерируется так, будто фиксов
+                месяца нет. Сами фиксы в БД не удаляются.
+              </span>
+            </span>
           </label>
 
           <Button

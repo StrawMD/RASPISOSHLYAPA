@@ -25,6 +25,7 @@ export async function POST(req: NextRequest) {
   const body = await req.json();
   const { year, month, normHours, timeLimit, seniorityFilter, versionName } =
     body;
+  const ignoreFixedSlots = Boolean(body.ignoreFixedSlots);
   // По умолчанию генерация идёт в режиме релаксации: смены, которые нельзя
   // закрыть без нарушения предпочтений/правил (в т.ч. потолка ночных 30%),
   // остаются ПУСТЫМИ и помечаются для ручного заполнения. Полное жёсткое
@@ -213,17 +214,10 @@ export async function POST(req: NextRequest) {
     const emp = employees.find((e) => e.id === pref.employeeId);
     if (!emp) continue;
 
-    const ppRaw = safeJson<Record<string, string>>(pref.postPreferences, {});
-    if (Object.keys(ppRaw).length > 0) {
-      postPreferences[emp.name] = ppRaw;
-    } else {
-      const legacy: string[] = safeJson(pref.postPriority, []);
-      if (legacy.length > 0) {
-        const map: Record<string, string> = {};
-        legacy.forEach((pid, i) => { map[pid] = i === 0 ? "prefer" : "neutral"; });
-        postPreferences[emp.name] = map;
-      }
-    }
+    // Предпочтения ПО АППАРАТАМ (postPreferences / postShiftPrefs) больше НЕ
+    // берутся из помесячных анкет: это админ-управляемый набор в Employee
+    // (см. ниже общий проход по сотрудникам). Здесь обрабатываем только
+    // помесячные пожелания, не относящиеся к аппаратам.
 
     shiftPreferences[emp.name] = {
       pref_24h_full:
@@ -244,14 +238,6 @@ export async function POST(req: NextRequest) {
           );
     if (mode && mode !== "neutral") {
       shiftTimeModes[emp.name] = mode;
-    }
-
-    const pspRaw = safeJson<Record<string, Record<string, string>>>(
-      pref.postShiftPrefs,
-      {},
-    );
-    if (pspRaw && Object.keys(pspRaw).length > 0) {
-      postShiftPrefs[emp.name] = pspRaw;
     }
 
     const dsaRaw = safeJson<Record<string, Record<string, boolean>>>(
@@ -312,12 +298,20 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  // Предпочтения по аппаратам — ЕДИНСТВЕННЫЙ источник: админ-набор в Employee
+  // (заполняется матрицей аппаратов). Применяем для любого месяца, помесячные
+  // анкеты на это не влияют.
   for (const emp of employees) {
-    if (!postPreferences[emp.name]) {
-      const empPrefs = safeJson<Record<string, string>>(emp.postPreferences, {});
-      if (Object.keys(empPrefs).length > 0) {
-        postPreferences[emp.name] = empPrefs;
-      }
+    const empPrefs = safeJson<Record<string, string>>(emp.postPreferences, {});
+    if (Object.keys(empPrefs).length > 0) {
+      postPreferences[emp.name] = empPrefs;
+    }
+    const empShiftPrefs = safeJson<Record<string, Record<string, string>>>(
+      emp.postShiftPrefs,
+      {},
+    );
+    if (Object.keys(empShiftPrefs).length > 0) {
+      postShiftPrefs[emp.name] = empShiftPrefs;
     }
   }
 
@@ -430,32 +424,37 @@ export async function POST(req: NextRequest) {
     : {};
 
   /** Актуальные фиксы из БД (не только снимок в начале запроса). */
-  const monthRow = await prisma.month.findUnique({
-    where: { id: monthRecord.id },
-    select: { solverFixedSlots: true },
-  });
-  const rawFixed = safeJson<unknown>(monthRow?.solverFixedSlots ?? "{}", {});
-  const employeesForValidation = employees.map((e) => ({
-    name: e.name,
-    allowedPosts: safeJson<string[]>(e.allowedPosts, []),
-  }));
-  const fixedCheck = validateFixedSlots(
-    rawFixed,
-    year,
-    month,
-    posts.map((p) => ({ id: p.id, shiftHours: p.shiftHours })),
-    employeesForValidation
-  );
-  if (!fixedCheck.ok) {
-    return NextResponse.json({ error: fixedCheck.error }, { status: 400 });
-  }
-  const fixedSlotsForSolver =
-    Object.keys(fixedCheck.data).length > 0 ? fixedCheck.data : undefined;
+  let fixedSlotsForSolver:
+    | Record<string, Record<string, string[]>>
+    | undefined = undefined;
   let fixedSlotsCount = 0;
-  if (fixedSlotsForSolver) {
-    for (const byPost of Object.values(fixedSlotsForSolver)) {
-      for (const labels of Object.values(byPost)) {
-        fixedSlotsCount += labels.length;
+  if (!ignoreFixedSlots) {
+    const monthRow = await prisma.month.findUnique({
+      where: { id: monthRecord.id },
+      select: { solverFixedSlots: true },
+    });
+    const rawFixed = safeJson<unknown>(monthRow?.solverFixedSlots ?? "{}", {});
+    const employeesForValidation = employees.map((e) => ({
+      name: e.name,
+      allowedPosts: safeJson<string[]>(e.allowedPosts, []),
+    }));
+    const fixedCheck = validateFixedSlots(
+      rawFixed,
+      year,
+      month,
+      posts.map((p) => ({ id: p.id, shiftHours: p.shiftHours })),
+      employeesForValidation
+    );
+    if (!fixedCheck.ok) {
+      return NextResponse.json({ error: fixedCheck.error }, { status: 400 });
+    }
+    fixedSlotsForSolver =
+      Object.keys(fixedCheck.data).length > 0 ? fixedCheck.data : undefined;
+    if (fixedSlotsForSolver) {
+      for (const byPost of Object.values(fixedSlotsForSolver)) {
+        for (const labels of Object.values(byPost)) {
+          fixedSlotsCount += labels.length;
+        }
       }
     }
   }
@@ -562,6 +561,7 @@ export async function POST(req: NextRequest) {
           normHours: nh,
           timeLimit,
           seniorityFilter,
+          ignoreFixedSlots,
           fixedSlotsApplied: fixedSlotsCount,
           relaxed: relaxedDraft,
           unfilled,
@@ -579,6 +579,7 @@ export async function POST(req: NextRequest) {
       versionNumber: version.versionNumber,
       employeeHours: result.employeeHours,
       fixedSlotsApplied: fixedSlotsCount,
+      ignoreFixedSlots,
       status: "draft",
       relaxed: relaxedDraft,
       unfilled,

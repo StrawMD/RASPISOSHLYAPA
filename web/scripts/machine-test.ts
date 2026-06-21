@@ -212,11 +212,15 @@ async function main() {
     }
     if (existing.size > 0) absences[emp.name] = Array.from(existing).sort((a, b) => a - b);
   }
+  // Предпочтения по аппаратам — только из админ-набора Employee (как в генерации).
   for (const emp of employees) {
-    if (!postPreferences[emp.name]) {
-      const empPrefs = safeJson<Record<string, string>>(emp.postPreferences, {});
-      if (Object.keys(empPrefs).length > 0) postPreferences[emp.name] = empPrefs;
-    }
+    const empPrefs = safeJson<Record<string, string>>(emp.postPreferences, {});
+    if (Object.keys(empPrefs).length > 0) postPreferences[emp.name] = empPrefs;
+    const empShift = safeJson<Record<string, Record<string, string>>>(
+      (emp as { postShiftPrefs?: string }).postShiftPrefs,
+      {},
+    );
+    if (Object.keys(empShift).length > 0) postShiftPrefs[emp.name] = empShift;
   }
 
   const employeeTargetHours: Record<string, number> = {};
