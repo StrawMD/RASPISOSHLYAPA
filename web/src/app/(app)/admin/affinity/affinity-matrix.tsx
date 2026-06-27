@@ -4,13 +4,38 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Select as SelectPrimitive } from "@base-ui/react/select";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { Save, Check, ChevronDown, Undo2, Redo2 } from "lucide-react";
+import { Save, Check, ChevronDown, Undo2, Redo2, Pencil } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
+import {
+  RATE_OPTIONS,
+  maxRateOptions,
+  targetRateFineOptions,
+  clampRates,
+  isPartTime,
+  maxRecurringDows,
+} from "@/lib/rates";
 
 type Post = { id: string; name: string; shiftHours: number; modality: string };
+type PostModality = { id: string; modality: string };
 type Kind = "full" | "day" | "night";
 
 type Row = {
@@ -26,10 +51,47 @@ type InputEmployee = {
   id: string;
   name: string;
   rate: number;
+  targetRate: number;
+  maxRate: number;
+  seniority: number;
+  hospitalStartYear: number | null;
+  careerStartYear: number | null;
   allowedPosts: string[];
+  modalities: string[];
+  can24h: boolean;
   postPreferences: Record<string, string>;
   postShiftPrefs: Record<string, Record<string, string>>;
+  consecutivePref: string;
+  medicalRestriction: string;
+  medicalNote: string | null;
+  recurringUnavailableDows: number[];
 };
+
+type Profile = {
+  id: string;
+  name: string;
+  rate: number;
+  targetRate: number;
+  maxRate: number;
+  seniority: number;
+  hospitalStartYear: number | null;
+  careerStartYear: number | null;
+  modalities: string[];
+  can24h: boolean;
+  consecutivePref: string;
+  medicalRestriction: string;
+  medicalNote: string | null;
+  recurringUnavailableDows: number[];
+};
+
+const MODALITY_OPTIONS = ["КТ", "МРТ"] as const;
+const MEDICAL_OPTIONS = [
+  { value: "none", label: "Без ограничений" },
+  { value: "no_night", label: "Без ночных (н)" },
+  { value: "no_24h", label: "Без суточных (с)" },
+  { value: "day_only", label: "Только дневные" },
+] as const;
+const DOW_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"] as const;
 
 type LevelMeta = {
   label: string; // полная подпись в выпадающем меню
@@ -248,17 +310,50 @@ function SatBadge({ info }: { info?: SatInfo }) {
 
 export function AffinityMatrix({
   posts,
+  allPostsModality,
   employees,
   months,
+  planNorm,
+  planLabel,
 }: {
   posts: Post[];
+  allPostsModality: PostModality[];
   employees: InputEmployee[];
   months: { year: number; month: number }[];
+  planNorm: number;
+  planLabel: string;
 }) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [query, setQuery] = useState("");
+
+  // Профили сотрудников (ставки/модальности/стаж и т.д.) — для подписи у
+  // фамилии и редактирования в модалке. Хранятся отдельно от сетки матрицы.
+  const [profiles, setProfiles] = useState<Record<string, Profile>>(() =>
+    Object.fromEntries(
+      employees.map((e) => [
+        e.id,
+        {
+          id: e.id,
+          name: e.name,
+          rate: e.rate,
+          targetRate: e.targetRate,
+          maxRate: e.maxRate,
+          seniority: e.seniority,
+          hospitalStartYear: e.hospitalStartYear,
+          careerStartYear: e.careerStartYear,
+          modalities: e.modalities,
+          can24h: e.can24h,
+          consecutivePref: e.consecutivePref,
+          medicalRestriction: e.medicalRestriction,
+          medicalNote: e.medicalNote,
+          recurringUnavailableDows: e.recurringUnavailableDows,
+        } satisfies Profile,
+      ]),
+    ),
+  );
+  const [editId, setEditId] = useState<string | null>(null);
 
   // ── Прогноз насыщения аппаратов на выбранный месяц ──
   const monthOptions = useMemo(() => {
@@ -468,6 +563,34 @@ export function AffinityMatrix({
     }
   }
 
+  // После сохранения профиля в модалке: обновляем подпись и допуски в сетке,
+  // не трогая историю/«грязность» правок самой матрицы.
+  const onProfileSaved = useCallback(
+    (updated: Profile, allowedPostIds: string[]) => {
+      setProfiles((prev) => ({ ...prev, [updated.id]: updated }));
+      // Полный список допусков (вкл. неактивные посты) — чтобы последующее
+      // сохранение сетки не потеряло допуски к отключённым аппаратам.
+      setHist((h) => ({
+        ...h,
+        present: h.present.map((r) =>
+          r.id === updated.id
+            ? {
+                ...r,
+                name: updated.name,
+                rate: updated.rate,
+                allowed: Object.fromEntries(
+                  allowedPostIds.map((p) => [p, true]),
+                ),
+              }
+            : r,
+        ),
+      }));
+    },
+    [],
+  );
+
+  const editProfile = editId ? profiles[editId] : null;
+
   return (
     <div className="rounded-lg border">
       <div className="flex flex-wrap items-center justify-between gap-3 border-b p-3">
@@ -575,11 +698,26 @@ export function AffinityMatrix({
                 <th className="sticky left-0 z-10 border-b border-r bg-background px-3 py-1 text-left font-normal">
                   <div className="flex items-center gap-1.5">
                     <span className="font-medium">{r.name}</span>
+                    <span
+                      className="text-[10px] tabular-nums text-muted-foreground"
+                      title="Целевая / макс. ставка"
+                    >
+                      {profiles[r.id]?.targetRate ?? r.rate}/
+                      {profiles[r.id]?.maxRate ?? r.rate}
+                    </span>
                     {r.rate <= 0.5 && (
                       <Badge variant="secondary" className="h-4 px-1 text-[9px]">
                         0.5
                       </Badge>
                     )}
+                    <button
+                      type="button"
+                      onClick={() => setEditId(r.id)}
+                      title="Редактировать сотрудника"
+                      className="ml-0.5 text-muted-foreground transition-colors hover:text-foreground"
+                    >
+                      <Pencil className="h-3 w-3" />
+                    </button>
                   </div>
                 </th>
 
@@ -654,6 +792,369 @@ export function AffinityMatrix({
           </tbody>
         </table>
       </div>
+
+      {editProfile && (
+        <EmployeeEditDialog
+          key={editProfile.id}
+          profile={editProfile}
+          allPostsModality={allPostsModality}
+          planNorm={planNorm}
+          planLabel={planLabel}
+          onClose={() => setEditId(null)}
+          onSaved={onProfileSaved}
+        />
+      )}
     </div>
+  );
+}
+
+function EmployeeEditDialog({
+  profile,
+  allPostsModality,
+  planNorm,
+  planLabel,
+  onClose,
+  onSaved,
+}: {
+  profile: Profile;
+  allPostsModality: PostModality[];
+  planNorm: number;
+  planLabel: string;
+  onClose: () => void;
+  onSaved: (updated: Profile, allowedPostIds: string[]) => void;
+}) {
+  const [name, setName] = useState(profile.name);
+  const [rate, setRate] = useState(profile.rate);
+  const [targetRate, setTargetRate] = useState(profile.targetRate);
+  const [maxRate, setMaxRate] = useState(profile.maxRate);
+  const [modalities, setModalities] = useState<string[]>(profile.modalities);
+  const [can24h, setCan24h] = useState(profile.can24h);
+  const [medical, setMedical] = useState(profile.medicalRestriction);
+  const [medicalNote, setMedicalNote] = useState(profile.medicalNote ?? "");
+  const [dows, setDows] = useState<Set<number>>(
+    new Set(profile.recurringUnavailableDows),
+  );
+  const [hospitalYear, setHospitalYear] = useState(
+    profile.hospitalStartYear != null ? String(profile.hospitalStartYear) : "",
+  );
+  const [careerYear, setCareerYear] = useState(
+    profile.careerStartYear != null ? String(profile.careerStartYear) : "",
+  );
+  const [saving, setSaving] = useState(false);
+
+  const dowLimit = maxRecurringDows(rate);
+  const targetOpts = targetRateFineOptions(rate, maxRate);
+  const maxOpts = maxRateOptions(rate);
+
+  function changeRate(next: number) {
+    const c = clampRates(next, targetRate, maxRate);
+    setRate(c.rate);
+    setTargetRate(c.targetRate);
+    setMaxRate(c.maxRate);
+    if (new Set([...dows]).size > maxRecurringDows(c.rate)) {
+      // ужать до нового лимита
+      const arr = Array.from(dows).sort((a, b) => a - b).slice(0, maxRecurringDows(c.rate));
+      setDows(new Set(arr));
+    }
+  }
+  function changeMax(next: number) {
+    const c = clampRates(rate, targetRate, next);
+    setTargetRate(c.targetRate);
+    setMaxRate(c.maxRate);
+  }
+  function changeTarget(next: number) {
+    setTargetRate(clampRates(rate, next, maxRate).targetRate);
+  }
+
+  function toggleModality(mod: string) {
+    setModalities((prev) => {
+      const next = prev.includes(mod)
+        ? prev.filter((m) => m !== mod)
+        : [...prev, mod];
+      if (mod === "КТ" && !next.includes("КТ")) setCan24h(false);
+      return next;
+    });
+  }
+
+  function toggleDow(idx: number) {
+    setDows((prev) => {
+      const next = new Set(prev);
+      if (next.has(idx)) {
+        next.delete(idx);
+      } else {
+        if (next.size >= dowLimit) {
+          toast.error(
+            `Максимум ${dowLimit} дн. ${
+              isPartTime(rate) ? "(совместитель)" : "(основной сотрудник)"
+            }`,
+          );
+          return prev;
+        }
+        next.add(idx);
+      }
+      return next;
+    });
+  }
+
+  function parseYear(s: string): number | null {
+    const t = s.trim();
+    if (!t) return null;
+    const n = parseInt(t, 10);
+    return Number.isNaN(n) ? null : n;
+  }
+
+  async function save() {
+    setSaving(true);
+    try {
+      const c = clampRates(rate, targetRate, maxRate);
+      const modSet = new Set(modalities);
+      const allowedPosts = allPostsModality
+        .filter((p) => p.modality && modSet.has(p.modality))
+        .map((p) => p.id);
+      const dowsArr = Array.from(dows).sort((a, b) => a - b);
+      const res = await fetch("/api/admin/employees", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: profile.id,
+          name: name.trim() || profile.name,
+          rate: c.rate,
+          targetRate: c.targetRate,
+          maxRate: c.maxRate,
+          seniority: profile.seniority,
+          hospitalStartYear: parseYear(hospitalYear),
+          careerStartYear: parseYear(careerYear),
+          allowedPosts,
+          modalities,
+          can24h,
+          consecutivePref: profile.consecutivePref,
+          medicalRestriction: medical,
+          medicalNote: medicalNote.trim() || null,
+          recurringUnavailableDows: dowsArr,
+        }),
+      });
+      if (!res.ok) {
+        const j = await res.json().catch(() => ({}));
+        throw new Error(j.error ?? "Ошибка сохранения");
+      }
+      onSaved(
+        {
+          id: profile.id,
+          name: name.trim() || profile.name,
+          rate: c.rate,
+          targetRate: c.targetRate,
+          maxRate: c.maxRate,
+          seniority: profile.seniority,
+          hospitalStartYear: parseYear(hospitalYear),
+          careerStartYear: parseYear(careerYear),
+          modalities,
+          can24h,
+          consecutivePref: profile.consecutivePref,
+          medicalRestriction: medical,
+          medicalNote: medicalNote.trim() || null,
+          recurringUnavailableDows: dowsArr,
+        },
+        allowedPosts,
+      );
+      toast.success(`${name.trim() || profile.name} сохранён`);
+      onClose();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Ошибка сохранения");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Сотрудник: {profile.name}</DialogTitle>
+        </DialogHeader>
+
+        <div className="space-y-4">
+          <div className="space-y-1.5">
+            <Label>Имя</Label>
+            <Input value={name} onChange={(e) => setName(e.target.value)} />
+          </div>
+
+          <div className="grid grid-cols-3 gap-3">
+            <div className="space-y-1.5">
+              <Label>Ставка</Label>
+              <Select
+                value={String(rate)}
+                onValueChange={(v) => v && changeRate(parseFloat(v))}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {RATE_OPTIONS.map((r) => (
+                    <SelectItem key={r} value={String(r)}>
+                      {r}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Целевая</Label>
+              <Select
+                value={String(targetRate)}
+                onValueChange={(v) => v && changeTarget(parseFloat(v))}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {targetOpts.map((r) => (
+                    <SelectItem key={r} value={String(r)}>
+                      {r} — {Math.round(r * planNorm)} ч
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>Макс.</Label>
+              <Select
+                value={String(maxRate)}
+                onValueChange={(v) => v && changeMax(parseFloat(v))}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {maxOpts.map((r) => (
+                    <SelectItem key={r} value={String(r)}>
+                      {r}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <p className="text-[11px] text-muted-foreground">
+            Эквивалент целевой ставки — часы на {planLabel} (норма {planNorm} ч на
+            ставку).
+          </p>
+
+          <div className="space-y-1.5">
+            <Label>Модальности</Label>
+            <div className="flex flex-wrap items-center gap-4">
+              {MODALITY_OPTIONS.map((mod) => (
+                <label key={mod} className="flex items-center gap-2 text-sm">
+                  <Checkbox
+                    checked={modalities.includes(mod)}
+                    onCheckedChange={() => toggleModality(mod)}
+                  />
+                  {mod}
+                </label>
+              ))}
+              {modalities.includes("КТ") && (
+                <label className="ml-2 flex items-center gap-2 border-l pl-4 text-sm">
+                  <Checkbox
+                    checked={can24h}
+                    onCheckedChange={(c) => setCan24h(!!c)}
+                  />
+                  Суточные КТ
+                </label>
+              )}
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Мед/правовое ограничение</Label>
+            <Select value={medical} onValueChange={(v) => v && setMedical(v)}>
+              <SelectTrigger>
+                <SelectValue>
+                  {(v: string) =>
+                    MEDICAL_OPTIONS.find((o) => o.value === v)?.label ?? v
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {MEDICAL_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {medical !== "none" && (
+              <Input
+                className="mt-2"
+                placeholder="Комментарий (необязательно)"
+                value={medicalNote}
+                onChange={(e) => setMedicalNote(e.target.value)}
+              />
+            )}
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Регулярно недоступен по дням недели</Label>
+            <div className="flex flex-wrap gap-1.5">
+              {DOW_LABELS.map((lbl, idx) => {
+                const active = dows.has(idx);
+                return (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => toggleDow(idx)}
+                    className={cn(
+                      "h-8 w-10 rounded border text-xs transition-colors",
+                      active
+                        ? "border-red-500 bg-red-500 text-white"
+                        : "bg-background hover:bg-muted",
+                    )}
+                  >
+                    {lbl}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              Максимум {dowLimit} дн.{" "}
+              {isPartTime(rate) ? "(совместитель)" : "(основной сотрудник)"}.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <Label>Год начала в больнице</Label>
+              <Input
+                inputMode="numeric"
+                placeholder="напр. 2015"
+                value={hospitalYear}
+                onChange={(e) =>
+                  setHospitalYear(e.target.value.replace(/\D/g, "").slice(0, 4))
+                }
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Год начала в профессии</Label>
+              <Input
+                inputMode="numeric"
+                placeholder="напр. 2010"
+                value={careerYear}
+                onChange={(e) =>
+                  setCareerYear(e.target.value.replace(/\D/g, "").slice(0, 4))
+                }
+              />
+            </div>
+          </div>
+        </div>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose} disabled={saving}>
+            Отмена
+          </Button>
+          <Button onClick={save} disabled={saving}>
+            <Save className="mr-1 h-4 w-4" />
+            {saving ? "Сохранение…" : "Сохранить"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }

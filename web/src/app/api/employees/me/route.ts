@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { clampRates } from "@/lib/rates";
+import { clampRates, maxRecurringDows } from "@/lib/rates";
 
 function safeJson<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
@@ -90,9 +90,9 @@ export async function PUT(req: NextRequest) {
     const nums = (body.recurringUnavailableDows as unknown[])
       .map((n) => Math.trunc(Number(n)))
       .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6);
-    recurringUnavailableDows = Array.from(new Set<number>(nums)).sort(
-      (a, b) => a - b,
-    );
+    recurringUnavailableDows = Array.from(new Set<number>(nums))
+      .sort((a, b) => a - b)
+      .slice(0, maxRecurringDows(rate));
   } else {
     recurringUnavailableDows = safeJson<number[]>(
       current.recurringUnavailableDows,

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { clampRates } from "@/lib/rates";
+import { clampRates, maxRecurringDows } from "@/lib/rates";
 
 function safeJson<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
@@ -34,12 +34,13 @@ function normMedical(v: unknown): string {
 function normMedicalNote(v: unknown): string | null {
   return typeof v === "string" && v.trim() ? v.trim().slice(0, 300) : null;
 }
-function normDows(v: unknown): string {
+function normDows(v: unknown, rate: number): string {
   if (!Array.isArray(v)) return "[]";
   const nums = (v as unknown[])
     .map((n) => Math.trunc(Number(n)))
     .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6);
-  return JSON.stringify(Array.from(new Set<number>(nums)).sort((a, b) => a - b));
+  const unique = Array.from(new Set<number>(nums)).sort((a, b) => a - b);
+  return JSON.stringify(unique.slice(0, maxRecurringDows(rate)));
 }
 
 export async function GET() {
@@ -90,7 +91,7 @@ export async function POST(req: NextRequest) {
       consecutivePref: normConsec(body.consecutivePref),
       medicalRestriction: normMedical(body.medicalRestriction),
       medicalNote: normMedicalNote(body.medicalNote),
-      recurringUnavailableDows: normDows(body.recurringUnavailableDows),
+      recurringUnavailableDows: normDows(body.recurringUnavailableDows, rate),
     },
   });
 
@@ -114,25 +115,38 @@ export async function PUT(req: NextRequest) {
     body.targetRate ?? body.rate,
     body.maxRate,
   );
+  // Предпочтения по аппаратам (postPreferences/postShiftPrefs) — источник
+  // истины: «Матрица аппаратов». Их трогаем ТОЛЬКО если переданы явно, иначе
+  // редактор профиля (модалка/анкета) затирал бы матрицу пустым объектом.
+  const data: Record<string, unknown> = {
+    name: body.name,
+    rate,
+    targetRate,
+    maxRate,
+    seniority: body.seniority ?? 0,
+    hospitalStartYear: body.hospitalStartYear ?? null,
+    careerStartYear: body.careerStartYear ?? null,
+    can24h: body.can24h ?? false,
+    consecutivePref: normConsec(body.consecutivePref),
+    medicalRestriction: normMedical(body.medicalRestriction),
+    medicalNote: normMedicalNote(body.medicalNote),
+    recurringUnavailableDows: normDows(body.recurringUnavailableDows, rate),
+  };
+  if (body.allowedPosts !== undefined) {
+    data.allowedPosts = JSON.stringify(body.allowedPosts);
+  }
+  if (body.modalities !== undefined) {
+    data.modalities = JSON.stringify(body.modalities);
+  }
+  if (body.postPreferences !== undefined) {
+    data.postPreferences = JSON.stringify(body.postPreferences);
+  }
+  if (body.postShiftPrefs !== undefined) {
+    data.postShiftPrefs = JSON.stringify(body.postShiftPrefs);
+  }
   const employee = await prisma.employee.update({
     where: { id: body.id },
-    data: {
-      name: body.name,
-      rate,
-      targetRate,
-      maxRate,
-      seniority: body.seniority ?? 0,
-      hospitalStartYear: body.hospitalStartYear ?? null,
-      careerStartYear: body.careerStartYear ?? null,
-      allowedPosts: JSON.stringify(body.allowedPosts),
-      modalities: JSON.stringify(body.modalities ?? []),
-      can24h: body.can24h ?? false,
-      postPreferences: JSON.stringify(body.postPreferences ?? {}),
-      consecutivePref: normConsec(body.consecutivePref),
-      medicalRestriction: normMedical(body.medicalRestriction),
-      medicalNote: normMedicalNote(body.medicalNote),
-      recurringUnavailableDows: normDows(body.recurringUnavailableDows),
-    },
+    data,
   });
 
   return NextResponse.json({

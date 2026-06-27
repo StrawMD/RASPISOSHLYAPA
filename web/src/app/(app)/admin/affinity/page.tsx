@@ -1,6 +1,8 @@
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 import { isPostActive } from "@/lib/post-active";
+import { getPlanningMonth, monthLabel } from "@/lib/planning-month";
+import { resolveMonthNorm } from "@/lib/rates";
 import { AffinityMatrix } from "./affinity-matrix";
 
 function safeJson<T>(value: string | null | undefined, fallback: T): T {
@@ -27,11 +29,19 @@ export default async function AdminAffinityPage() {
     );
   }
 
-  const allPosts = await prisma.post.findMany({ orderBy: { sortOrder: "asc" } });
-  const posts = allPosts.filter(isPostActive).map((p) => ({
+  const allPostsRaw = await prisma.post.findMany({
+    orderBy: { sortOrder: "asc" },
+  });
+  const posts = allPostsRaw.filter(isPostActive).map((p) => ({
     id: p.id,
     name: p.name,
     shiftHours: p.shiftHours,
+    modality: p.modality ?? "",
+  }));
+  // Все посты (вкл. отключённые) с модальностью — для вывода allowedPosts из
+  // модальностей при сохранении профиля в модалке.
+  const allPostsModality = allPostsRaw.map((p) => ({
+    id: p.id,
     modality: p.modality ?? "",
   }));
 
@@ -41,9 +51,20 @@ export default async function AdminAffinityPage() {
       id: true,
       name: true,
       rate: true,
+      targetRate: true,
+      maxRate: true,
+      seniority: true,
+      hospitalStartYear: true,
+      careerStartYear: true,
       allowedPosts: true,
+      modalities: true,
+      can24h: true,
       postPreferences: true,
       postShiftPrefs: true,
+      consecutivePref: true,
+      medicalRestriction: true,
+      medicalNote: true,
+      recurringUnavailableDows: true,
     },
   });
 
@@ -56,13 +77,56 @@ export default async function AdminAffinityPage() {
     id: e.id,
     name: e.name,
     rate: e.rate,
+    targetRate: e.targetRate,
+    maxRate: e.maxRate,
+    seniority: e.seniority,
+    hospitalStartYear: e.hospitalStartYear,
+    careerStartYear: e.careerStartYear,
     allowedPosts: safeJson<string[]>(e.allowedPosts, []),
+    modalities: safeJson<string[]>(e.modalities, []),
+    can24h: e.can24h ?? false,
     postPreferences: safeJson<Record<string, string>>(e.postPreferences, {}),
     postShiftPrefs: safeJson<Record<string, Record<string, string>>>(
       e.postShiftPrefs,
       {},
     ),
+    consecutivePref: e.consecutivePref ?? "avoid",
+    medicalRestriction: e.medicalRestriction ?? "none",
+    medicalNote: e.medicalNote,
+    recurringUnavailableDows: safeJson<number[]>(e.recurringUnavailableDows, []),
   }));
+
+  // Норма часов на ставку для планируемого месяца — чтобы в модалке показать
+  // эквивалент целевой ставки в часах.
+  const planning = await getPlanningMonth();
+  const normsRow = await prisma.setting.findUnique({
+    where: { key: "monthNorms" },
+  });
+  const normOverrides = safeJson<Record<string, number>>(
+    normsRow?.value ?? "{}",
+    {},
+  );
+  const holidaysThis = await prisma.holiday.findMany({
+    where: { year: planning.year },
+  });
+  const holidaysNext = await prisma.holiday.findMany({
+    where: { year: planning.year + 1 },
+  });
+  const holidaySet = new Set([
+    ...holidaysThis.map((h) => h.date),
+    ...holidaysNext.map((h) => h.date),
+  ]);
+  const fmtDate = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(
+      d.getDate(),
+    ).padStart(2, "0")}`;
+  const planNorm = resolveMonthNorm(
+    planning.year,
+    planning.month,
+    (d) => holidaySet.has(fmtDate(d)),
+    normOverrides,
+  );
+  const planLabel = monthLabel(planning.year, planning.month);
 
   return (
     <div className="space-y-4">
@@ -77,7 +141,14 @@ export default async function AdminAffinityPage() {
           меняется в карточке сотрудника.
         </p>
       </div>
-      <AffinityMatrix posts={posts} employees={employees} months={monthRows} />
+      <AffinityMatrix
+        posts={posts}
+        allPostsModality={allPostsModality}
+        employees={employees}
+        months={monthRows}
+        planNorm={planNorm}
+        planLabel={planLabel}
+      />
     </div>
   );
 }

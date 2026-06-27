@@ -28,6 +28,7 @@ import {
   maxRateCap,
   clampRates,
   isPartTime,
+  maxRecurringDows,
 } from "@/lib/rates";
 import {
   Plus,
@@ -264,6 +265,17 @@ export function EmployeeManager({
     const emp = employees.find((e) => e.id === empId);
     if (!emp) return;
     const has = emp.recurringUnavailableDows.includes(dow);
+    if (!has) {
+      const limit = maxRecurringDows(emp.rate);
+      if (emp.recurringUnavailableDows.length >= limit) {
+        toast.error(
+          `Максимум ${limit} дн. ${
+            isPartTime(emp.rate) ? "(совместитель)" : "(основной сотрудник)"
+          } регулярной недоступности`,
+        );
+        return;
+      }
+    }
     const next = has
       ? emp.recurringUnavailableDows.filter((d) => d !== dow)
       : [...emp.recurringUnavailableDows, dow].sort((a, b) => a - b);

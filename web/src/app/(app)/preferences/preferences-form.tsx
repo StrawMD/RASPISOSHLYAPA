@@ -25,13 +25,9 @@ import { toast } from "sonner";
 import { Clock } from "lucide-react";
 import { useRouter } from "next/navigation";
 import {
-  RATE_OPTIONS,
-  maxRateOptions,
-  targetRateOptions,
-  maxRateCap,
-  clampRates,
   isPartTime,
   minFreeWorkDays,
+  maxRecurringDows,
   round2,
 } from "@/lib/rates";
 
@@ -83,8 +79,6 @@ const PREF_COLOR: Record<string, string> = {
   neutral: "text-muted-foreground",
   null: "text-muted-foreground",
 };
-
-const MODALITIES = ["КТ", "МРТ"] as const;
 
 type ShiftTimeMode =
   | "only_full"
@@ -294,18 +288,18 @@ export function PreferencesForm({
       ? Math.min(Math.max(employee.targetRate, initialRate), initialMaxRate)
       : initialRate;
 
-  const [rate, setRate] = useState(initialRate);
-  const [targetRate, setTargetRate] = useState(initialTargetRate);
-  const [maxRate, setMaxRate] = useState(initialMaxRate);
-  const [maxRateCustom, setMaxRateCustom] = useState(
-    !maxRateOptions(initialRate).includes(round2(initialMaxRate)),
-  );
-  const [modalities, setModalities] = useState<string[]>(employee.modalities);
-  const [can24h, setCan24h] = useState(employee.can24h);
-  const [hospitalYearStr, setHospitalYearStr] = useState(() =>
+  // Профиль (ставки, модальности, стаж) теперь правит только администратор в
+  // «Матрице аппаратов» — здесь значения только читаются и пересохраняются как
+  // есть, поэтому без сеттеров.
+  const [rate] = useState(initialRate);
+  const [targetRate] = useState(initialTargetRate);
+  const [maxRate] = useState(initialMaxRate);
+  const [modalities] = useState<string[]>(employee.modalities);
+  const [can24h] = useState(employee.can24h);
+  const [hospitalYearStr] = useState(() =>
     employee.hospitalStartYear != null ? String(employee.hospitalStartYear) : "",
   );
-  const [careerYearStr, setCareerYearStr] = useState(() =>
+  const [careerYearStr] = useState(() =>
     employee.careerStartYear != null ? String(employee.careerStartYear) : "",
   );
 
@@ -417,42 +411,6 @@ export function PreferencesForm({
     modalities.includes("КТ") &&
     has24hPostsInSystem &&
     visiblePosts.some((p) => p.shiftHours === 24);
-
-  function toggleModality(mod: string) {
-    if (readOnly) return;
-    setModalities((prev) => {
-      const next = prev.includes(mod)
-        ? prev.filter((m) => m !== mod)
-        : [...prev, mod];
-      if (mod === "КТ" && !next.includes("КТ")) {
-        setCan24h(false);
-      }
-      return next;
-    });
-  }
-
-  function changeRate(next: number) {
-    if (readOnly) return;
-    const c = clampRates(next, targetRate, maxRate);
-    setRate(c.rate);
-    setMaxRate(c.maxRate);
-    setTargetRate(c.targetRate);
-    setMaxRateCustom(!maxRateOptions(c.rate).includes(c.maxRate));
-  }
-
-  function changeTargetRate(next: number) {
-    if (readOnly) return;
-    if (Number.isNaN(next)) return;
-    setTargetRate(clampRates(rate, next, maxRate).targetRate);
-  }
-
-  function changeMaxRate(next: number) {
-    if (readOnly) return;
-    if (Number.isNaN(next)) return;
-    const c = clampRates(rate, targetRate, next);
-    setMaxRate(c.maxRate);
-    setTargetRate(c.targetRate);
-  }
 
   function removeFrom(
     setter: React.Dispatch<React.SetStateAction<Set<number>>>,
@@ -569,12 +527,25 @@ export function PreferencesForm({
     });
   }
 
+  const recurringDowLimit = maxRecurringDows(rate);
+
   function toggleRecurringDow(idx: number) {
     if (readOnly) return;
     setRecurringDows((prev) => {
       const next = new Set(prev);
-      if (next.has(idx)) next.delete(idx);
-      else next.add(idx);
+      if (next.has(idx)) {
+        next.delete(idx);
+      } else {
+        if (next.size >= recurringDowLimit) {
+          toast.error(
+            `Максимум ${recurringDowLimit} ${
+              partTime ? "дней (совместитель)" : "дня (основной сотрудник)"
+            } регулярной недоступности`,
+          );
+          return prev;
+        }
+        next.add(idx);
+      }
       return next;
     });
   }
@@ -811,10 +782,6 @@ export function PreferencesForm({
     });
   }
 
-  const currentYear = new Date().getFullYear();
-  const minYear = currentYear - 60;
-  const maxYear = currentYear;
-
   return (
     <div className="space-y-5 max-w-2xl">
       <div>
@@ -878,182 +845,6 @@ export function PreferencesForm({
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">Мои данные</CardTitle>
-          <CardDescription>
-            Основная информация о вас, используется при расстановке смен.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <Label className="mb-2 block">Модальности</Label>
-            <div className="flex flex-wrap gap-4">
-              {MODALITIES.map((mod) => (
-                <label
-                  key={mod}
-                  className="flex items-center gap-2 text-sm cursor-pointer"
-                >
-                  <Checkbox
-                    checked={modalities.includes(mod)}
-                    disabled={readOnly}
-                    onCheckedChange={() => toggleModality(mod)}
-                  />
-                  {mod}
-                </label>
-              ))}
-              {modalities.includes("КТ") && has24hPostsInSystem && (
-                <label className="flex items-center gap-2 text-sm ml-4 border-l pl-4 cursor-pointer">
-                  <Checkbox
-                    checked={can24h}
-                    disabled={readOnly}
-                    onCheckedChange={(c) => setCan24h(!!c)}
-                  />
-                  Могу работать суточные КТ
-                </label>
-              )}
-            </div>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-3">
-            <div className="space-y-1.5">
-              <Label>Ставка</Label>
-              <Select
-                value={String(rate)}
-                onValueChange={(v) => v && changeRate(parseFloat(v))}
-                disabled={readOnly}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {RATE_OPTIONS.map((r) => (
-                    <SelectItem key={r} value={String(r)}>
-                      {r}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-[11px] text-muted-foreground">
-                Официальная ставка по договору.
-              </p>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Целевая ставка</Label>
-              <Select
-                value={String(targetRate)}
-                onValueChange={(v) => v && changeTargetRate(parseFloat(v))}
-                disabled={readOnly}
-              >
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {targetRateOptions(rate, maxRate).map((r) => (
-                    <SelectItem key={r} value={String(r)}>
-                      {r}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <p className="text-[11px] text-muted-foreground">
-                Желаемая загрузка — график будет стремиться к ней.
-              </p>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Макс. ставка (потолок)</Label>
-              <Select
-                value={maxRateCustom ? "custom" : String(maxRate)}
-                onValueChange={(v) => {
-                  if (!v) return;
-                  if (v === "custom") {
-                    setMaxRateCustom(true);
-                    return;
-                  }
-                  setMaxRateCustom(false);
-                  changeMaxRate(parseFloat(v));
-                }}
-                disabled={readOnly}
-              >
-                <SelectTrigger>
-                  <SelectValue>
-                    {(v: string) =>
-                      v === "custom" ? "Своё значение" : v
-                    }
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  {maxRateOptions(rate).map((r) => (
-                    <SelectItem key={r} value={String(r)}>
-                      {r}
-                    </SelectItem>
-                  ))}
-                  <SelectItem value="custom">Своё значение…</SelectItem>
-                </SelectContent>
-              </Select>
-              {maxRateCustom && (
-                <Input
-                  type="number"
-                  step={0.05}
-                  min={rate}
-                  max={maxRateCap(rate)}
-                  value={maxRate}
-                  onChange={(e) => changeMaxRate(parseFloat(e.target.value))}
-                  onBlur={(e) => {
-                    const n = parseFloat(e.target.value);
-                    if (!Number.isNaN(n)) changeMaxRate(n);
-                  }}
-                  disabled={readOnly}
-                  placeholder={`до ${maxRateCap(rate)}`}
-                />
-              )}
-              <p className="text-[11px] text-muted-foreground">
-                {isPartTime(rate)
-                  ? "Потолок переработки для полставки — максимум 0.75."
-                  : "Абсолютный потолок переработки. Максимум 2.0."}
-              </p>
-            </div>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="space-y-1.5">
-              <Label>Год начала работы в больнице</Label>
-              <Input
-                type="text"
-                inputMode="numeric"
-                autoComplete="off"
-                placeholder="напр. 2015"
-                value={hospitalYearStr}
-                onChange={(e) =>
-                  setHospitalYearStr(e.target.value.replace(/\D/g, "").slice(0, 4))
-                }
-                disabled={readOnly}
-              />
-              <p className="text-[11px] text-muted-foreground">
-                Допустимо: {minYear}–{maxYear}
-              </p>
-            </div>
-            <div className="space-y-1.5">
-              <Label>Год начала работы в профессии</Label>
-              <Input
-                type="text"
-                inputMode="numeric"
-                autoComplete="off"
-                placeholder="напр. 2010"
-                value={careerYearStr}
-                onChange={(e) =>
-                  setCareerYearStr(e.target.value.replace(/\D/g, "").slice(0, 4))
-                }
-                disabled={readOnly}
-              />
-              <p className="text-[11px] text-muted-foreground">
-                Допустимо: {minYear}–{maxYear}
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-2">
           <CardTitle className="text-base">Ограничения</CardTitle>
           <CardDescription>
             Медицинские/правовые ограничения и регулярная недоступность.
@@ -1114,7 +905,9 @@ export function PreferencesForm({
             </div>
             <p className="text-[11px] text-muted-foreground">
               Напр. учёба/кафедра каждый вторник — эти дни всегда будут выходными
-              (можно не отмечать вручную каждый раз).
+              (можно не отмечать вручную каждый раз). Максимум{" "}
+              {recurringDowLimit}{" "}
+              {partTime ? "дн. (совместитель)" : "дн. (основной сотрудник)"}.
             </p>
           </div>
         </CardContent>

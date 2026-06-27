@@ -12,10 +12,10 @@
 
 export const RATE_OPTIONS = [0.5, 1.0] as const;
 export const PART_TIME_MAX_RATE = 0.75;
-export const ABSOLUTE_MAX_RATE = 2.0;
+export const ABSOLUTE_MAX_RATE = 2.5;
 
 const PART_TIME_STEPS = [0.5, 0.55, 0.6, 0.65, 0.7, 0.75];
-const FULL_TIME_STEPS = [1.0, 1.25, 1.5, 1.75, 2.0];
+const FULL_TIME_STEPS = [1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5];
 
 const EPS = 1e-9;
 
@@ -45,6 +45,26 @@ export function targetRateOptions(rate: number, maxRate: number): number[] {
   const cap = Math.min(maxRate, maxRateCap(rate));
   const steps = isPartTime(rate) ? PART_TIME_STEPS : FULL_TIME_STEPS;
   return steps.filter((r) => r >= rate - EPS && r <= cap + EPS);
+}
+
+/**
+ * Мелкие (0.05) деления целевой ставки от договорной ставки до потолка —
+ * для тонкой настройки целевой загрузки в карточке/модалке сотрудника.
+ */
+export function targetRateFineOptions(rate: number, maxRate: number): number[] {
+  const cap = Math.min(Math.max(maxRate, rate), maxRateCap(rate));
+  const out: number[] = [];
+  for (let v = rate; v <= cap + EPS; v = round2(v + 0.05)) out.push(round2(v));
+  return out;
+}
+
+/**
+ * Максимум дней недели для регулярной недоступности:
+ *   • совместители (полставка) — до 6;
+ *   • основные сотрудники — до 3.
+ */
+export function maxRecurringDows(rate: number): number {
+  return isPartTime(rate) ? 6 : 3;
 }
 
 /** Свести тройку ставок к согласованным значениям (rate ≤ target ≤ max ≤ cap). */
