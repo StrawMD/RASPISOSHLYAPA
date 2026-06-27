@@ -1083,34 +1083,54 @@ export function ScheduleEditPage() {
                                 —
                               </span>
                             ) : (
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  quickToggleFixCell(d, p.id, people)
-                                }
-                                className="inline-flex flex-wrap items-center gap-0.5 rounded border border-dashed border-sky-400 px-1 py-0.5 hover:bg-sky-500/10 transition-colors"
-                                title="Кликните, чтобы закрепить/снять всю ячейку"
-                              >
-                                {people.map(
-                                  (person: string, idx: number) => {
-                                    const isFixed =
-                                      fixedKeys.has(
-                                        `${d}:${p.id}:${person}`,
-                                      ) && !versionIgnoredFixed;
-                                    return (
-                                      <span
-                                        key={idx}
-                                        className={`inline-flex items-center gap-0.5 rounded border px-1 py-px text-[11px] ${
-                                          isFixed ? FIXED_CLASS : "opacity-70"
-                                        }`}
-                                      >
-                                        {isFixed && "🔒"}
-                                        {person}
-                                      </span>
-                                    );
-                                  },
-                                )}
-                              </button>
+                              (() => {
+                                const fixedCount = people.filter((l) =>
+                                  fixedKeys.has(`${d}:${p.id}:${l}`),
+                                ).length;
+                                const allFixed = fixedCount === people.length;
+                                const someFixed = fixedCount > 0;
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      quickToggleFixCell(d, p.id, people)
+                                    }
+                                    className={`inline-flex flex-wrap items-center gap-0.5 rounded border-2 px-1 py-0.5 cursor-pointer transition-colors ${
+                                      allFixed
+                                        ? "border-sky-500 bg-sky-500/25 ring-1 ring-sky-500"
+                                        : someFixed
+                                          ? "border-sky-400 bg-sky-500/10"
+                                          : "border-dashed border-muted-foreground/40 hover:border-sky-400 hover:bg-sky-500/10"
+                                    }`}
+                                    title={
+                                      allFixed
+                                        ? "Кликните, чтобы снять фикс со всей ячейки"
+                                        : "Кликните, чтобы закрепить всю ячейку"
+                                    }
+                                  >
+                                    {people.map(
+                                      (person: string, idx: number) => {
+                                        const isFixed = fixedKeys.has(
+                                          `${d}:${p.id}:${person}`,
+                                        );
+                                        return (
+                                          <span
+                                            key={idx}
+                                            className={`inline-flex items-center gap-0.5 rounded border px-1 py-px text-[11px] ${
+                                              isFixed
+                                                ? FIXED_CLASS
+                                                : "border-transparent opacity-70"
+                                            }`}
+                                          >
+                                            {isFixed && "🔒"}
+                                            {person}
+                                          </span>
+                                        );
+                                      },
+                                    )}
+                                  </button>
+                                );
+                              })()
                             )
                           ) : quickAddName ? (
                             <>
@@ -1522,6 +1542,13 @@ export function ScheduleEditPage() {
               Сводка по версии
             </CardTitle>
             <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground pt-1">
+              <span>
+                Норма на ставку:{" "}
+                <strong className="text-foreground">
+                  {Math.round(version.normHours ?? 0)}
+                </strong>{" "}
+                ч/мес
+              </span>
               <span>
                 Часов всего:{" "}
                 <strong className="text-foreground">

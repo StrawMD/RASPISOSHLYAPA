@@ -123,22 +123,25 @@ export async function GET(req: NextRequest) {
     isHolidayDate,
   );
 
-  // Если норма месяца не сохранена (старые версии) — берём источник истины:
-  // override месяца из Setting `monthNorms` или авто-расчёт по кадровой формуле.
-  if (normHours <= 0) {
-    const monthNormsRow = await prisma.setting.findUnique({
-      where: { key: "monthNorms" },
-    });
-    const overrides = safeJson<Record<string, number>>(
-      monthNormsRow?.value ?? "{}",
-      {},
-    );
-    normHours = resolveMonthNorm(
-      version.month.year,
-      version.month.month,
-      isHolidayDate,
-      overrides,
-    );
+  // Источник истины для нормы месяца: override из Setting `monthNorms` или
+  // авто-расчёт по кадровой формуле. Сводка считается именно от него, а не от
+  // снимка month.normHours — снимок мог устареть (поменяли праздники/override
+  // уже после генерации), и тогда % в сводке были бы неверными.
+  const monthNormsRow = await prisma.setting.findUnique({
+    where: { key: "monthNorms" },
+  });
+  const normOverrides = safeJson<Record<string, number>>(
+    monthNormsRow?.value ?? "{}",
+    {},
+  );
+  const resolvedNorm = resolveMonthNorm(
+    version.month.year,
+    version.month.month,
+    isHolidayDate,
+    normOverrides,
+  );
+  if (resolvedNorm > 0) {
+    normHours = resolvedNorm;
   }
   const availFactorByName: Record<string, number> = {};
   for (const e of employees) {
