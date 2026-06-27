@@ -138,6 +138,7 @@ async function main() {
   const maxFullByName: Record<string, number> = {};
   const minShiftsByName: Record<string, number> = {};
   const avoidSamePostByName: Record<string, boolean> = {};
+  const preferSamePostByName: Record<string, boolean> = {};
 
   function deriveLegacyShiftTimeMode(full: string | null, day: string | null, night: string | null): string {
     if (full === "prefer" && day === "avoid" && night === "avoid") return "only_full";
@@ -198,7 +199,8 @@ async function main() {
     if (typeof pref.maxNights === "number") maxNightsByName[emp.name] = pref.maxNights;
     if (typeof pref.maxFull === "number") maxFullByName[emp.name] = pref.maxFull;
     if (typeof pref.minShifts === "number" && pref.minShifts > 0) minShiftsByName[emp.name] = pref.minShifts;
-    if (pref.avoidSamePost) avoidSamePostByName[emp.name] = true;
+    if (pref.postVarietyPref === "variety" || pref.avoidSamePost) avoidSamePostByName[emp.name] = true;
+    if (pref.postVarietyPref === "same") preferSamePostByName[emp.name] = true;
   }
 
   for (const emp of employees) {
@@ -303,6 +305,7 @@ async function main() {
         consecutivePref: effectiveConsecutive, medicalRestriction: e.medicalRestriction ?? "none",
         can24h: e.can24h, maxNights: maxNightsByName[e.name] ?? null, maxFull: maxFullByName[e.name] ?? null,
         minShifts: minShiftsByName[e.name] ?? null, avoidSamePost: avoidSamePostByName[e.name] ?? false,
+        preferSamePost: preferSamePostByName[e.name] ?? false,
       };
     }),
     config: {

@@ -10,8 +10,15 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { toast } from "sonner";
-import { Loader2, Plus, X, ArrowLeftRight, History, AlertTriangle, Undo2, Redo2 } from "lucide-react";
+import { Loader2, Plus, X, ArrowLeftRight, History, AlertTriangle, Undo2, Redo2, UserPlus } from "lucide-react";
 import {
   analyzeSchedule,
   type ComplianceEmployee,
@@ -29,6 +36,12 @@ const KIND_LABELS: { key: ShiftKind; label: string }[] = [
   { key: "day", label: "день (д)" },
   { key: "night", label: "ночь (н)" },
 ];
+
+const KIND_SHORT: Record<ShiftKind, string> = {
+  full: "с",
+  day: "д",
+  night: "н",
+};
 
 const DAY_NAMES = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"];
 
@@ -107,13 +120,24 @@ function computeHourStat(
 
   const rate = employee?.rate ?? 1;
   const maxRate = employee?.maxRate ?? rate;
-  const target = normHours * rate;
-  const cap = normHours * Math.max(maxRate, rate);
+  // Поправка на доступность: при отпуске цель и потолки масштабируются так же,
+  // как это делает солвер (иначе человек на отпуске «вечно жёлтый»).
+  const avail =
+    employee?.availFactor != null
+      ? Math.max(0, Math.min(1, employee.availFactor))
+      : 1;
+  const target = normHours * rate * avail;
+  // Желаемый потолок (maxRate) — пока в его пределах загрузка нормальна
+  // («зелёная»), даже если солвер сознательно тянет всех к ~1.25 ставки.
+  const cap = normHours * Math.max(maxRate, rate) * avail;
+  // Аварийный потолок: выход за желаемый штрафуется, но физически разрешён до
+  // maxRate+0.5 (не выше 2.0 ставки). Жёлтый — в этой зоне, красный — выше.
+  const emergencyRate = Math.min(2.0, Math.max(maxRate, rate) + 0.5);
+  const emergencyCap = normHours * emergencyRate * avail;
   const remaining = cap - currentHours;
-  const midpoint = target + (cap - target) / 2;
   let level: HourStat["level"] = "green";
-  if (currentHours > cap) level = "red";
-  else if (currentHours > midpoint) level = "yellow";
+  if (currentHours > emergencyCap + 0.01) level = "red";
+  else if (currentHours > cap + 0.01) level = "yellow";
   return { hours: currentHours, target, cap, remaining, level };
 }
 
@@ -191,6 +215,19 @@ export function ScheduleEditPage() {
     { name: string; overTarget: number; overCeiling: number }[]
   >([]);
   const [emergencyOvertimeTotal, setEmergencyOvertimeTotal] = useState(0);
+  // Версия генерилась без фиксов месяца — тогда совпадения с фиксами не
+  // «прибиты гвоздём», поэтому синим их не красим.
+  const [versionIgnoredFixed, setVersionIgnoredFixed] = useState(false);
+  // Режим быстрого обмена двух ячеек: первый выбранный «источник» хранится тут.
+  const [swapMode, setSwapMode] = useState(false);
+  const [swapSource, setSwapSource] = useState<
+    { day: number; postId: string; label: string } | null
+  >(null);
+  // Режим быстрого добавления: выбранная фамилия проставляется кликом по
+  // ячейкам сразу во многих местах. Для суточных постов — выбранный тип смены.
+  const [quickAddName, setQuickAddName] = useState<string>("");
+  const [quickAddKind, setQuickAddKind] = useState<ShiftKind>("full");
+  const [quickPickerOpen, setQuickPickerOpen] = useState(false);
   // Целевое число людей в ячейке (на момент открытия) = занято + недобор.
   // Подсветка «дыр» гаснет по мере дозаполнения в текущей сессии.
   const [cellTargets, setCellTargets] = useState<Record<string, number>>({});
@@ -213,6 +250,7 @@ export function ScheduleEditPage() {
       setRelaxed(Boolean(data.relaxed));
       setOvertime(data.overtime ?? []);
       setEmergencyOvertimeTotal(data.emergencyOvertimeTotal ?? 0);
+      setVersionIgnoredFixed(Boolean(data.ignoreFixedSlots));
 
       if (!targetsInitialized.current) {
         targetsInitialized.current = true;
@@ -411,6 +449,165 @@ export function ScheduleEditPage() {
     );
   }
 
+  function stripSuffix(label: string): string {
+    return label.replace(/\([сдн]\)$/, "");
+  }
+
+  function labelKind(label: string): ShiftKind | undefined {
+    const m = label.match(/\(([сдн])\)$/);
+    if (!m) return undefined;
+    return m[1] === "с" ? "full" : m[1] === "д" ? "day" : "night";
+  }
+
+  // Сменить тип смены (д↔с↔н) у того же человека на суточном посту — без
+  // удаления и повторного добавления.
+  async function changeShiftType(
+    day: number,
+    postId: string,
+    person: string,
+    nextKind: ShiftKind,
+  ) {
+    const name = stripSuffix(person);
+    const newLabel = formatScheduleLabel(name, 24, nextKind);
+    if (newLabel === person) return;
+    await doEdit(day, postId, "swap", person, newLabel);
+  }
+
+  // Быстрый обмен двух занятых ячеек: меняем людей местами, сохраняя тип смены
+  // каждой ячейки. Пишется двумя правками (часы пересчитываются на сервере).
+  async function performSwap(
+    a: { day: number; postId: string; label: string },
+    b: { day: number; postId: string; label: string },
+  ) {
+    const pa = posts.find((p) => p.id === a.postId);
+    const pb = posts.find((p) => p.id === b.postId);
+    if (!pa || !pb) return;
+    const nameA = stripSuffix(a.label);
+    const nameB = stripSuffix(b.label);
+    if (nameA === nameB) {
+      toast.error("Это один и тот же человек");
+      return;
+    }
+    const empA = employees.find((e) => e.name === nameA);
+    const empB = employees.find((e) => e.name === nameB);
+    if (empA && !empA.allowedPosts.includes(b.postId)) {
+      toast.error(`${nameA} не допущен на ${pb.name}`);
+      return;
+    }
+    if (empB && !empB.allowedPosts.includes(a.postId)) {
+      toast.error(`${nameB} не допущен на ${pa.name}`);
+      return;
+    }
+    const newA = formatScheduleLabel(nameB, pa.shiftHours, labelKind(a.label));
+    const newB = formatScheduleLabel(nameA, pb.shiftHours, labelKind(b.label));
+    if (await runEdit({ day: a.day, postId: a.postId, editType: "swap", oldValue: a.label, newValue: newA })) {
+      setHistStack((s) => [...s, { scope: "version", op: { day: a.day, postId: a.postId, editType: "swap", oldValue: a.label, newValue: newA } }]);
+    }
+    if (await runEdit({ day: b.day, postId: b.postId, editType: "swap", oldValue: b.label, newValue: newB })) {
+      setHistStack((s) => [...s, { scope: "version", op: { day: b.day, postId: b.postId, editType: "swap", oldValue: b.label, newValue: newB } }]);
+    }
+    setHistFuture([]);
+    toast.success("Поменяли местами");
+  }
+
+  function onSwapClick(day: number, postId: string, label: string) {
+    if (!swapSource) {
+      setSwapSource({ day, postId, label });
+      return;
+    }
+    if (
+      swapSource.day === day &&
+      swapSource.postId === postId &&
+      swapSource.label === label
+    ) {
+      setSwapSource(null);
+      return;
+    }
+    const src = swapSource;
+    setSwapSource(null);
+    performSwap(src, { day, postId, label });
+  }
+
+  // Зафиксировать/снять фикс на ВСЕ смены человека в текущем черновике.
+  async function fixAllForPerson(name: string, pin: boolean) {
+    const ops: { day: number; postId: string; label: string }[] = [];
+    for (const [dayStr, byPost] of Object.entries(schedule)) {
+      for (const [postId, people] of Object.entries(byPost)) {
+        for (const label of people) {
+          if (stripSuffix(label) !== name) continue;
+          const isFixed = (fixedSlots[dayStr]?.[postId] ?? []).includes(label);
+          if (pin && !isFixed) ops.push({ day: Number(dayStr), postId, label });
+          if (!pin && isFixed) ops.push({ day: Number(dayStr), postId, label });
+        }
+      }
+    }
+    if (ops.length === 0) {
+      toast.info(pin ? "Нечего фиксировать" : "Нет фиксов этого человека");
+      return;
+    }
+    let ok = 0;
+    for (const op of ops) {
+      const done = await runFixedEdit({
+        day: op.day,
+        postId: op.postId,
+        editType: pin ? "assign" : "remove",
+        oldValue: pin ? null : op.label,
+        newValue: pin ? op.label : null,
+      });
+      if (done) ok += 1;
+    }
+    toast.success(
+      pin
+        ? `Зафиксировано смен: ${ok}`
+        : `Снято фиксов: ${ok}`,
+    );
+  }
+
+  // Быстрое добавление выбранной фамилии в ячейку (без тоста на каждый клик —
+  // чтобы «расхерачить» одного человека по многим ячейкам было комфортно).
+  async function quickAssign(day: number, postId: string, shiftHours: number) {
+    if (!quickAddName) return;
+    const label = formatScheduleLabel(
+      quickAddName,
+      shiftHours,
+      shiftHours === 24 ? quickAddKind : undefined,
+    );
+    const op: EditOp = {
+      day,
+      postId,
+      editType: "assign",
+      oldValue: null,
+      newValue: label,
+    };
+    if (await runEdit(op)) {
+      setHistStack((s) => [...s, { scope: "version", op }]);
+      setHistFuture([]);
+    }
+  }
+
+  async function quickRemove(day: number, postId: string, label: string) {
+    const op: EditOp = {
+      day,
+      postId,
+      editType: "remove",
+      oldValue: label,
+      newValue: null,
+    };
+    if (await runEdit(op)) {
+      setHistStack((s) => [...s, { scope: "version", op }]);
+      setHistFuture([]);
+    }
+  }
+
+  function enableQuickAdd(name: string) {
+    setQuickAddName(name);
+    setQuickPickerOpen(false);
+    // Режимы взаимоисключающие, чтобы клики по ячейкам не конфликтовали.
+    setSwapMode(false);
+    setSwapSource(null);
+    setHighlightName("");
+  }
+
   async function undoEdit() {
     if (histStack.length === 0) return;
     const entry = histStack[histStack.length - 1];
@@ -543,17 +740,85 @@ export function ScheduleEditPage() {
               ))}
             </select>
             {highlightName && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 px-2"
-                onClick={() => setHighlightName("")}
-                title="Выключить выделение"
-              >
-                <X className="h-3.5 w-3.5" />
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-2 text-xs"
+                  onClick={() => fixAllForPerson(highlightName, true)}
+                  title="Зафиксировать все смены выбранного сотрудника"
+                >
+                  🔒 Все смены
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-8 px-2 text-xs"
+                  onClick={() => fixAllForPerson(highlightName, false)}
+                  title="Снять все фиксы выбранного сотрудника"
+                >
+                  🔓 Снять
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 px-2"
+                  onClick={() => setHighlightName("")}
+                  title="Выключить выделение"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </>
             )}
           </div>
+          <Button
+            variant={swapMode ? "default" : "outline"}
+            size="sm"
+            className="h-8 px-2 text-xs"
+            onClick={() => {
+              setSwapMode((v) => !v);
+              setSwapSource(null);
+              setQuickAddName("");
+            }}
+            title="Обмен двух людей местами: включите режим и кликните две ячейки"
+          >
+            <ArrowLeftRight className="h-3.5 w-3.5 mr-1" />
+            {swapMode
+              ? swapSource
+                ? "Выберите вторую…"
+                : "Обмен: вкл"
+              : "Обмен"}
+          </Button>
+          <Popover open={quickPickerOpen} onOpenChange={setQuickPickerOpen}>
+            <PopoverTrigger
+              className={`inline-flex items-center h-8 px-2 text-xs rounded-md border transition-colors ${
+                quickAddName
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "bg-background border-input hover:bg-muted"
+              }`}
+              title="Быстрое добавление: выберите фамилию и кликайте по ячейкам"
+            >
+              <UserPlus className="h-3.5 w-3.5 mr-1" />
+              Быстрое добавление
+            </PopoverTrigger>
+            <PopoverContent className="w-64 p-0" align="start">
+              <Command>
+                <CommandInput placeholder="Фамилия…" />
+                <CommandList>
+                  <CommandEmpty>Не найдено</CommandEmpty>
+                  {employees.map((e) => (
+                    <CommandItem
+                      key={e.id}
+                      value={e.name}
+                      onSelect={() => enableQuickAdd(e.name)}
+                    >
+                      {e.name}
+                    </CommandItem>
+                  ))}
+                </CommandList>
+              </Command>
+            </PopoverContent>
+          </Popover>
           <div className="flex items-center gap-1">
             <Button
               variant="outline"
@@ -631,6 +896,46 @@ export function ScheduleEditPage() {
         </div>
       )}
 
+      {quickAddName && (
+        <div className="sticky top-0 z-20 flex flex-wrap items-center gap-2 rounded-md border border-violet-400 bg-violet-50 dark:bg-violet-950/30 px-3 py-2 text-sm">
+          <UserPlus className="h-4 w-4 shrink-0 text-violet-600" />
+          <span>
+            Быстрое добавление:{" "}
+            <strong className="text-violet-700 dark:text-violet-300">
+              {quickAddName}
+            </strong>
+            . Кликайте по ячейкам, чтобы поставить (повторный клик по этой
+            фамилии — убрать).
+          </span>
+          {posts.some((p) => p.shiftHours === 24) && (
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-muted-foreground">Сутки:</span>
+              {KIND_LABELS.map(({ key, label }) => (
+                <Button
+                  key={key}
+                  size="sm"
+                  variant={quickAddKind === key ? "default" : "outline"}
+                  className="h-7 px-2 text-xs"
+                  onClick={() => setQuickAddKind(key)}
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 ml-auto"
+            onClick={() => setQuickAddName("")}
+            title="Выключить быстрое добавление"
+          >
+            <X className="h-3.5 w-3.5 mr-1" />
+            Выйти
+          </Button>
+        </div>
+      )}
+
       <div className="overflow-x-auto">
         <table className="w-full text-xs border-collapse min-w-[800px]">
           <thead>
@@ -697,14 +1002,68 @@ export function ScheduleEditPage() {
                               −{hole}
                             </span>
                           )}
+                          {quickAddName ? (
+                            <>
+                              {people.map((person: string, idx: number) => {
+                                const bn = stripSuffix(person);
+                                const isTarget = bn === quickAddName;
+                                const st = getStat(bn);
+                                return (
+                                  <button
+                                    key={idx}
+                                    type="button"
+                                    disabled={!isTarget}
+                                    onClick={
+                                      isTarget
+                                        ? () => quickRemove(d, p.id, person)
+                                        : undefined
+                                    }
+                                    className={`inline-flex items-center gap-0.5 rounded border px-1.5 py-0.5 text-xs ${
+                                      isTarget
+                                        ? "ring-2 ring-violet-500 bg-violet-500/20 cursor-pointer"
+                                        : `opacity-50 ${LEVEL_CLASSES[st.level]}`
+                                    }`}
+                                    title={isTarget ? "Убрать" : person}
+                                  >
+                                    {person}
+                                  </button>
+                                );
+                              })}
+                              {eligible.some((e) => e.name === quickAddName) &&
+                                !assignedNames.has(quickAddName) && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      quickAssign(d, p.id, p.shiftHours)
+                                    }
+                                    className="inline-flex items-center gap-0.5 rounded border border-violet-500 bg-violet-500/10 text-violet-700 dark:text-violet-300 px-1.5 py-0.5 text-xs hover:bg-violet-500/20 transition-colors"
+                                    title={`Добавить ${quickAddName}${
+                                      p.shiftHours === 24
+                                        ? ` (${KIND_SHORT[quickAddKind]})`
+                                        : ""
+                                    }`}
+                                  >
+                                    <Plus className="h-3 w-3" />
+                                    {p.shiftHours === 24
+                                      ? KIND_SHORT[quickAddKind]
+                                      : ""}
+                                  </button>
+                                )}
+                            </>
+                          ) : (
+                            <>
                           {people.map((person: string, idx: number) => {
                             const baseName = person.replace(/\([сдн]\)$/, "");
                             const personStat = getStat(baseName);
                             const isFixed = fixedKeys.has(
                               `${d}:${p.id}:${person}`,
                             );
+                            // Если версия генерилась с игнором фиксов — совпадение
+                            // с фикс-слотом случайное (солвер их не применял),
+                            // поэтому «как фикс» не подсвечиваем.
+                            const fixedActive = isFixed && !versionIgnoredFixed;
                             // Фикс перекрывает запреты — нарушение к нему не применяем.
-                            const violation = isFixed
+                            const violation = fixedActive
                               ? undefined
                               : violationReasonByKey.get(`${d}:${p.id}:${person}`);
                             const isHi = highlightMode && baseName === highlightName;
@@ -716,9 +1075,34 @@ export function ScheduleEditPage() {
                                 : HIGHLIGHT_OFF_CLASS
                               : violation
                                 ? VIOLATION_CLASS
-                                : isFixed
+                                : fixedActive
                                   ? FIXED_CLASS
                                   : LEVEL_CLASSES[personStat.level];
+                            const swapSelected =
+                              swapSource != null &&
+                              swapSource.day === d &&
+                              swapSource.postId === p.id &&
+                              swapSource.label === person;
+                            if (swapMode) {
+                              return (
+                                <button
+                                  key={idx}
+                                  type="button"
+                                  onClick={() => onSwapClick(d, p.id, person)}
+                                  className={`inline-flex items-center gap-0.5 rounded border transition-opacity hover:opacity-80 px-1.5 py-0.5 text-xs ${
+                                    swapSelected
+                                      ? "ring-2 ring-violet-500 bg-violet-500/20"
+                                      : cellClass
+                                  }`}
+                                  title="Обмен: кликните вторую ячейку"
+                                >
+                                  {person}
+                                  <span className="opacity-70 text-[10px]">
+                                    · {Math.round(personStat.hours)}ч
+                                  </span>
+                                </button>
+                              );
+                            }
                             return (
                               <Popover key={idx}>
                                 <PopoverTrigger
@@ -726,7 +1110,7 @@ export function ScheduleEditPage() {
                                   title={
                                     violation
                                       ? `⚠ Жёсткое ограничение: ${violation}`
-                                      : isFixed
+                                      : fixedActive
                                         ? `🔒 Зафиксировано админом (перекрывает запреты) · ${Math.round(personStat.hours)}ч`
                                         : `Всего: ${Math.round(personStat.hours)}ч · По ставке: ${Math.round(personStat.target)}ч · Потолок: ${Math.round(personStat.cap)}ч`
                                   }
@@ -734,7 +1118,7 @@ export function ScheduleEditPage() {
                                   {!highlightMode && violation && (
                                     <span className="mr-0.5">⚠</span>
                                   )}
-                                  {!highlightMode && !violation && isFixed && (
+                                  {!highlightMode && !violation && fixedActive && (
                                     <span className="mr-0.5">🔒</span>
                                   )}
                                   {person}
@@ -757,12 +1141,20 @@ export function ScheduleEditPage() {
                                         ⚠ Жёсткое ограничение: {violation}
                                       </div>
                                     )}
-                                    {!violation && isFixed && (
+                                    {!violation && fixedActive && (
                                       <div className="mb-2 rounded bg-sky-600/15 border border-sky-600/50 px-2 py-1 text-[11px] text-sky-700 dark:text-sky-300">
                                         🔒 Зафиксировано админом — солвер обязан
                                         сохранить эту ячейку, поэтому она
                                         перекрывает любые запреты (медотвод,
                                         «не ставить», недоступный день).
+                                      </div>
+                                    )}
+                                    {isFixed && versionIgnoredFixed && (
+                                      <div className="mb-2 rounded bg-muted px-2 py-1 text-[11px] text-muted-foreground">
+                                        Эта версия генерировалась без учёта
+                                        фиксов — совпадение с фикс-слотом выбрал
+                                        сам солвер. Фикс сработает при следующей
+                                        генерации.
                                       </div>
                                     )}
                                     <div className="flex items-center gap-1 mb-2">
@@ -789,6 +1181,29 @@ export function ScheduleEditPage() {
                                     >
                                       {isFixed ? "🔓 Снять фикс" : "🔒 Зафиксировать для генерации"}
                                     </Button>
+                                    {p.shiftHours === 24 && (
+                                      <>
+                                        <p className="text-[10px] text-muted-foreground pt-1">
+                                          Сменить тип смены:
+                                        </p>
+                                        {KIND_LABELS.filter(
+                                          ({ key }) => key !== labelKind(person),
+                                        ).map(({ key, label }) => (
+                                          <Button
+                                            key={key}
+                                            variant="ghost"
+                                            size="sm"
+                                            className="w-full justify-start text-xs h-7"
+                                            onClick={() =>
+                                              changeShiftType(d, p.id, person, key)
+                                            }
+                                          >
+                                            <ArrowLeftRight className="h-3 w-3 mr-1" />
+                                            {label}
+                                          </Button>
+                                        ))}
+                                      </>
+                                    )}
                                     {available.length > 0 && (
                                       <>
                                         <p className="text-[10px] text-muted-foreground pt-1">
@@ -931,6 +1346,8 @@ export function ScheduleEditPage() {
                                 </div>
                               </PopoverContent>
                             </Popover>
+                          )}
+                            </>
                           )}
                         </div>
                       </td>

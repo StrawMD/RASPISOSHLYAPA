@@ -135,6 +135,12 @@ model Preference {
   consecutivePrefOverride String?
   /** Желаемая нагрузка в этом месяце: less | normal | more (null = normal). */
   loadPref        String?
+  /** Режим доступности полставочника/совместителя: whitelist | blacklist (null = blacklist). */
+  availabilityMode String?
+  /** JSON: дни месяца, в которые сотрудник МОЖЕТ работать (для whitelist-режима). */
+  availableDays   String   @default("[]")
+  /** Пожелание по разнообразию аппаратов: same | variety (null = нейтрально). */
+  postVarietyPref String?
   /** Личный лимит ночных (н) смен за месяц (null = без лимита). */
   maxNights       Int?
   /** Личный лимит суточных (с) смен за месяц (null = без лимита). */

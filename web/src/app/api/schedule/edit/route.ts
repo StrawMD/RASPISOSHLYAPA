@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
-import { workNormHours } from "@/lib/rates";
+import { workNormHours, resolveMonthNorm } from "@/lib/rates";
 
 function safeJson<T>(value: string | null | undefined, fallback: T): T {
   if (!value) return fallback;
@@ -44,6 +44,7 @@ export async function GET(req: NextRequest) {
     unfilledCount?: number;
     overtime?: { name: string; overTarget: number; overCeiling: number }[];
     emergencyOvertimeTotal?: number;
+    ignoreFixedSlots?: boolean;
   }>(version.solverParams, {});
 
   let normHours = version.month.normHours ?? 0;
@@ -81,6 +82,13 @@ export async function GET(req: NextRequest) {
   }
   for (const pr of prefRows) {
     addAbsent(pr.employee.name, safeJson<number[]>(pr.unavailableDays, []));
+    // Белый список (полставка): доступен только в указанные дни.
+    if (pr.availabilityMode === "whitelist") {
+      const avail = new Set(safeJson<number[]>(pr.availableDays, []));
+      const blocked: number[] = [];
+      for (let d = 1; d <= daysInMonth; d++) if (!avail.has(d)) blocked.push(d);
+      addAbsent(pr.employee.name, blocked);
+    }
   }
   for (const e of employees) {
     const dows = safeJson<number[]>(e.recurringUnavailableDows, []);
@@ -114,6 +122,24 @@ export async function GET(req: NextRequest) {
     version.month.month,
     isHolidayDate,
   );
+
+  // Если норма месяца не сохранена (старые версии) — берём источник истины:
+  // override месяца из Setting `monthNorms` или авто-расчёт по кадровой формуле.
+  if (normHours <= 0) {
+    const monthNormsRow = await prisma.setting.findUnique({
+      where: { key: "monthNorms" },
+    });
+    const overrides = safeJson<Record<string, number>>(
+      monthNormsRow?.value ?? "{}",
+      {},
+    );
+    normHours = resolveMonthNorm(
+      version.month.year,
+      version.month.month,
+      isHolidayDate,
+      overrides,
+    );
+  }
   const availFactorByName: Record<string, number> = {};
   for (const e of employees) {
     const absentSet = absentByName[e.name] ?? new Set<number>();
@@ -183,6 +209,7 @@ export async function GET(req: NextRequest) {
     unfilledCount: sp.unfilledCount ?? 0,
     overtime: sp.overtime ?? [],
     emergencyOvertimeTotal: sp.emergencyOvertimeTotal ?? 0,
+    ignoreFixedSlots: Boolean(sp.ignoreFixedSlots),
     posts,
     employees: employees.map((e) => ({
       id: e.id,

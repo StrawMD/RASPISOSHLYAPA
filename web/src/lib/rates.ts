@@ -95,6 +95,28 @@ function dowMon0(year: number, month: number, day: number): number {
  * `isHolidayDate` получает дату (в т.ч. 1-е число следующего месяца — для
  * проверки «предпраздничный ли сегодня день»).
  */
+/**
+ * Норма часов на ПОЛНУЮ (1.0) ставку за месяц как ИСТОЧНИК ИСТИНЫ:
+ *   • если в `overrides` есть значение для `${year}-${month}` (>0) — берём его;
+ *   • иначе считаем по кадровому алгоритму (`workNormHours` — будни×6, праздники
+ *     не считаются, предпраздничный день короче на час).
+ *
+ * `overrides` — карта вида `{ "2026-7": 126 }` (хранится в Setting `monthNorms`).
+ */
+export function resolveMonthNorm(
+  year: number,
+  month: number,
+  isHolidayDate: (d: Date) => boolean,
+  overrides?: Record<string, number> | null,
+): number {
+  const key = `${year}-${month}`;
+  const ov = overrides?.[key];
+  if (typeof ov === "number" && Number.isFinite(ov) && ov > 0) {
+    return ov;
+  }
+  return workNormHours(year, month, isHolidayDate);
+}
+
 export function workNormHours(
   year: number,
   month: number,

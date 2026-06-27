@@ -33,6 +33,7 @@ export interface SolverInput {
     maxFull?: number | null;
     minShifts?: number | null;
     avoidSamePost?: boolean;
+    preferSamePost?: boolean;
   }[];
   config: {
     year: number;

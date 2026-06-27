@@ -55,6 +55,7 @@ def main():
             max_full=e.get("maxFull"),
             min_shifts=e.get("minShifts"),
             avoid_same_post=bool(e.get("avoidSamePost", False)),
+            prefer_same_post=bool(e.get("preferSamePost", False)),
         )
         for e in input_data["employees"]
     ]

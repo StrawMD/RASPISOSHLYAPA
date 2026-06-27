@@ -76,6 +76,8 @@ class Employee:
     min_shifts: int | None = None
     # Опт-ин: не ставить на один и тот же аппарат два дня подряд
     avoid_same_post: bool = False
+    # Опт-ин: наоборот, хочу один и тот же аппарат в соседние рабочие дни
+    prefer_same_post: bool = False
 
     def __hash__(self):
         return hash(self.name)

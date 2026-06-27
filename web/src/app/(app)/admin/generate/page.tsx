@@ -29,6 +29,8 @@ export default function GeneratePage() {
   const [year, setYear] = useState(now.getFullYear());
   const [month, setMonth] = useState(now.getMonth() + 1);
   const [normHours, setNormHours] = useState(120);
+  const [computedNorm, setComputedNorm] = useState<number | null>(null);
+  const [normOverridden, setNormOverridden] = useState(false);
   const [timeLimit, setTimeLimit] = useState(900);
   const [nightShareCapPercent, setNightShareCapPercent] = useState(50);
   const [seniorityFilter, setSeniorityFilter] = useState(false);
@@ -60,6 +62,27 @@ export default function GeneratePage() {
       })
       .catch(() => {});
   }, []);
+
+  // Норма часов — источник истины: подтягиваем рассчитанную/переопределённую
+  // норму выбранного месяца. Пока админ не правил поле вручную, держим его в
+  // синхроне с эталоном (override месяца или авто-расчёт).
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/admin/month-norm?year=${year}&month=${month}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelled || !d) return;
+        if (typeof d.computed === "number") setComputedNorm(d.computed);
+        if (typeof d.value === "number" && !normOverridden) {
+          setNormHours(d.value);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [year, month]);
 
   async function handleGenerate(relax = true) {
     setLoading(true);
@@ -190,10 +213,45 @@ export default function GeneratePage() {
               <Input
                 type="number"
                 value={normHours}
-                onChange={(e) => setNormHours(parseFloat(e.target.value))}
+                onChange={(e) => {
+                  setNormHours(parseFloat(e.target.value));
+                  setNormOverridden(true);
+                }}
                 min={20}
                 max={400}
               />
+              <p className="text-xs text-muted-foreground">
+                {computedNorm != null ? (
+                  <>
+                    Эталон месяца: <strong>{computedNorm}ч</strong> (будни×6,
+                    минус праздники/предпраздничные).
+                    {normOverridden && Math.abs(normHours - computedNorm) > 0.01 && (
+                      <>
+                        {" "}
+                        Вы задали своё значение —{" "}
+                        <button
+                          type="button"
+                          className="underline"
+                          onClick={() => {
+                            setNormHours(computedNorm);
+                            setNormOverridden(false);
+                          }}
+                        >
+                          вернуть эталон
+                        </button>
+                        .
+                      </>
+                    )}{" "}
+                    Постоянное значение месяца меняется в{" "}
+                    <Link href="/admin/holidays" className="underline">
+                      Праздниках
+                    </Link>
+                    .
+                  </>
+                ) : (
+                  "Подставляется норма месяца; можно переопределить на этот прогон."
+                )}
+              </p>
             </div>
 
             <div className="space-y-1.5">

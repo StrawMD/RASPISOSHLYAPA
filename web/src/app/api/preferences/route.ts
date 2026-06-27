@@ -2,6 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 
+function safeJson<T>(value: string | null | undefined, fallback: T): T {
+  if (!value) return fallback;
+  try {
+    return JSON.parse(value) as T;
+  } catch {
+    return fallback;
+  }
+}
+
 function maxConsecutive(days: number[], daysInMonth: number): number {
   if (days.length === 0) return 0;
   const set = new Set(days);
@@ -50,9 +59,31 @@ export async function POST(req: NextRequest) {
     avoidSamePost,
     postShiftPrefs,
     dowShiftAvoid,
+    availabilityMode,
+    availableDays,
+    postVarietyPref,
   } = body;
 
   const normAvoidSamePost = Boolean(avoidSamePost);
+
+  const normAvailabilityMode =
+    availabilityMode === "whitelist" || availabilityMode === "blacklist"
+      ? availabilityMode
+      : null;
+  const normAvailableDays: number[] = Array.isArray(availableDays)
+    ? Array.from(
+        new Set(
+          availableDays.filter(
+            (d: unknown) =>
+              Number.isInteger(d) && (d as number) >= 1 && (d as number) <= 31,
+          ),
+        ),
+      ).sort((a, b) => (a as number) - (b as number))
+    : [];
+  const normPostVarietyPref =
+    postVarietyPref === "same" || postVarietyPref === "variety"
+      ? postVarietyPref
+      : null;
 
   const ALLOWED_MODES = new Set([
     "only_full",
@@ -191,26 +222,84 @@ export async function POST(req: NextRequest) {
   }
 
   const daysInMonth = new Date(year, month, 0).getDate();
-  const unavail: number[] = unavailableDays ?? [];
+  const clampDay = (d: unknown): d is number =>
+    Number.isInteger(d) && (d as number) >= 1 && (d as number) <= daysInMonth;
+  // Чистим присланные дни: только валидные числа в пределах месяца, без дублей.
+  const unavail: number[] = Array.isArray(unavailableDays)
+    ? Array.from(new Set(unavailableDays.filter(clampDay))).sort((a, b) => a - b)
+    : [];
   const consecutive = maxConsecutive(unavail, daysInMonth);
 
-  let needsApproval = false;
-  if (!isAdmin && unavail.length > 0) {
+  // Режим «белый список» без единого дня = человек не работает весь месяц.
+  // Защита и на сервере (форма тоже не даёт сохранить).
+  if (normAvailabilityMode === "whitelist" && normAvailableDays.length === 0) {
+    return NextResponse.json(
+      {
+        error:
+          "Для режима «работаю только в эти даты» отметьте хотя бы один день",
+      },
+      { status: 400 },
+    );
+  }
+
+  // Лимиты на даты для ОСНОВНЫХ сотрудников (ставка ≥ 1.0): макс. подряд и
+  // всего — отдельно для «не могу» и «лучше не ставить». Полставочники/
+  // совместители (ставка ≤ 0.5) задают даты строго и без лимитов.
+  const DATE_MAX_CONSEC = 4;
+  const DATE_MAX_TOTAL = 12;
+  const needsApproval = false;
+  if (!isAdmin) {
     const employee = await prisma.employee.findUnique({
       where: { id: employeeId },
     });
-    if (employee) {
-      const limit = employee.rate >= 1.0 ? 3 : 6;
-      if (consecutive > limit) {
+    if (employee && employee.rate >= 1.0) {
+      // Чтобы не запирать сотрудников, у которых в БД уже лежат данные сверх
+      // новых лимитов (собранные по старым правилам «3 подряд»): применяем
+      // ограничения только к ДОБАВЛЕННЫМ дням. Снять/перезаписать в пределах
+      // уже сохранённого набора можно всегда.
+      const existingPref = await prisma.preference.findUnique({
+        where: { employeeId_monthId: { employeeId, monthId: monthRecord.id } },
+      });
+      const storedUnavail = safeJson<number[]>(
+        existingPref?.unavailableDays,
+        [],
+      );
+      const storedSoft = safeJson<number[]>(
+        existingPref?.softUnavailableDays,
+        [],
+      );
+      const subsetOf = (a: number[], b: number[]) => {
+        const s = new Set(b);
+        return a.every((x) => s.has(x));
+      };
+      const softDaysForCheck = normSoftDays;
+      const softConsecutive = maxConsecutive(softDaysForCheck, daysInMonth);
+      const unavailGrew = !subsetOf(unavail, storedUnavail);
+      const softGrew = !subsetOf(softDaysForCheck, storedSoft);
+
+      if (unavailGrew && unavail.length > DATE_MAX_TOTAL) {
         return NextResponse.json(
-          {
-            error: `Максимум ${limit} дней подряд. У вас ${consecutive}.`,
-          },
+          { error: `Максимум ${DATE_MAX_TOTAL} дней «не могу». У вас ${unavail.length}.` },
           { status: 400 },
         );
       }
-      if (employee.rate >= 1.0 && consecutive > 3) {
-        needsApproval = true;
+      if (unavailGrew && consecutive > DATE_MAX_CONSEC) {
+        return NextResponse.json(
+          { error: `Максимум ${DATE_MAX_CONSEC} дней «не могу» подряд. У вас ${consecutive}.` },
+          { status: 400 },
+        );
+      }
+      if (softGrew && softDaysForCheck.length > DATE_MAX_TOTAL) {
+        return NextResponse.json(
+          { error: `Максимум ${DATE_MAX_TOTAL} дней «лучше не ставить». У вас ${softDaysForCheck.length}.` },
+          { status: 400 },
+        );
+      }
+      if (softGrew && softConsecutive > DATE_MAX_CONSEC) {
+        return NextResponse.json(
+          { error: `Максимум ${DATE_MAX_CONSEC} дней «лучше не ставить» подряд. У вас ${softConsecutive}.` },
+          { status: 400 },
+        );
       }
     }
   }
@@ -240,6 +329,9 @@ export async function POST(req: NextRequest) {
       maxFull: toCap(maxFull),
       minShifts: toCap(minShifts),
       avoidSamePost: normAvoidSamePost,
+      postVarietyPref: normPostVarietyPref,
+      availabilityMode: normAvailabilityMode,
+      availableDays: JSON.stringify(normAvailableDays),
       avoidWith: JSON.stringify(normAvoidWith),
       preferWith: JSON.stringify(normPreferWith),
       submittedAt: new Date(),
@@ -267,6 +359,9 @@ export async function POST(req: NextRequest) {
       maxFull: toCap(maxFull),
       minShifts: toCap(minShifts),
       avoidSamePost: normAvoidSamePost,
+      postVarietyPref: normPostVarietyPref,
+      availabilityMode: normAvailabilityMode,
+      availableDays: JSON.stringify(normAvailableDays),
       avoidWith: JSON.stringify(normAvoidWith),
       preferWith: JSON.stringify(normPreferWith),
     },

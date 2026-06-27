@@ -5,7 +5,7 @@ import { runSolver, SolverInput, SolverInfeasibleError } from "@/lib/solver-brid
 import { computeTenure } from "@/lib/seniority";
 import { prismaSchemaHint } from "@/lib/prisma-schema-hint";
 import { validateFixedSlots } from "@/lib/validate-fixed-slots";
-import { clampRates, workNormHours, isPartTime } from "@/lib/rates";
+import { clampRates, workNormHours, isPartTime, resolveMonthNorm } from "@/lib/rates";
 import { mergeSolverConfig } from "@/lib/solver-config";
 
 function safeJson<T>(value: string | null | undefined, fallback: T): T {
@@ -190,6 +190,7 @@ export async function POST(req: NextRequest) {
   const maxFullByName: Record<string, number> = {};
   const minShiftsByName: Record<string, number> = {};
   const avoidSamePostByName: Record<string, boolean> = {};
+  const preferSamePostByName: Record<string, boolean> = {};
 
   function deriveLegacyShiftTimeMode(
     full: string | null,
@@ -265,6 +266,17 @@ export async function POST(req: NextRequest) {
       absences[emp.name] = Array.from(existing).sort((a, b) => a - b);
     }
 
+    // Полставочник/совместитель в режиме «белый список»: работает ТОЛЬКО в
+    // указанные дни — все остальные дни месяца становятся жёстко недоступны.
+    if (pref.availabilityMode === "whitelist") {
+      const avail = new Set(safeJson<number[]>(pref.availableDays, []));
+      const existing = new Set(absences[emp.name] ?? []);
+      for (let d = 1; d <= daysInMonth; d++) {
+        if (!avail.has(d)) existing.add(d);
+      }
+      absences[emp.name] = Array.from(existing).sort((a, b) => a - b);
+    }
+
     const softDays: number[] = safeJson(pref.softUnavailableDays, []);
     if (softDays.length > 0) softUnavailableDays[emp.name] = softDays;
 
@@ -281,7 +293,10 @@ export async function POST(req: NextRequest) {
     if (typeof pref.maxFull === "number") maxFullByName[emp.name] = pref.maxFull;
     if (typeof pref.minShifts === "number" && pref.minShifts > 0)
       minShiftsByName[emp.name] = pref.minShifts;
-    if (pref.avoidSamePost) avoidSamePostByName[emp.name] = true;
+    // Разнообразие аппаратов (3-позиция). Бэк-компат: avoidSamePost=true → variety.
+    if (pref.postVarietyPref === "variety" || pref.avoidSamePost)
+      avoidSamePostByName[emp.name] = true;
+    if (pref.postVarietyPref === "same") preferSamePostByName[emp.name] = true;
   }
 
   // Регулярная недельная недоступность (профиль) → раскрываем в дни месяца.
@@ -321,7 +336,6 @@ export async function POST(req: NextRequest) {
   const employeeHardMaxHours: Record<string, number> = {};
   const employeeFloorHours: Record<string, number> = {};
   const employeeFairHours: Record<string, number> = {};
-  const nh = normHours || monthRecord.normHours;
 
   // «Справедливый» уровень нагрузки: всех сперва загружаем до ~1.25 ставки
   // (независимо от личной целевой ставки), и лишь потом перегружаем тех, у кого
@@ -355,6 +369,21 @@ export async function POST(req: NextRequest) {
     ).padStart(2, "0")}`;
   const isHolidayDate = (d: Date) => holidayDates.has(fmtDate(d));
   const fullWorkNorm = workNormHours(year, month, isHolidayDate);
+
+  // Норма часов — источник истины: явный override запроса (поле формы) →
+  // override месяца из Setting `monthNorms` → авто-расчёт по кадровой формуле.
+  // Значение, сохранённое ранее в Month.normHours, больше не источник истины.
+  const monthNormsRow = await prisma.setting.findUnique({
+    where: { key: "monthNorms" },
+  });
+  const monthNormOverrides = safeJson<Record<string, number>>(
+    monthNormsRow?.value ?? "{}",
+    {},
+  );
+  const nh =
+    typeof normHours === "number" && normHours > 0
+      ? normHours
+      : resolveMonthNorm(year, month, isHolidayDate, monthNormOverrides);
 
   for (const emp of employees) {
     const eff = effRates.get(emp.name)!;
@@ -501,6 +530,7 @@ export async function POST(req: NextRequest) {
         maxFull: maxFullByName[e.name] ?? null,
         minShifts: minShiftsByName[e.name] ?? null,
         avoidSamePost: avoidSamePostByName[e.name] ?? false,
+        preferSamePost: preferSamePostByName[e.name] ?? false,
       };
     }),
     config: {

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Select,
@@ -19,10 +20,19 @@ const MONTH_NAMES = [
   "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
 ];
 
+type MonthNorm = {
+  month: number;
+  computed: number;
+  override: number | null;
+  value: number;
+};
+
 export default function HolidaysPage() {
   const [year, setYear] = useState(new Date().getFullYear());
   const [holidays, setHolidays] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
+  const [norms, setNorms] = useState<MonthNorm[]>([]);
+  const [normDrafts, setNormDrafts] = useState<Record<number, string>>({});
 
   const loadHolidays = useCallback(async () => {
     const res = await fetch(`/api/admin/holidays?year=${year}`);
@@ -32,9 +42,39 @@ export default function HolidaysPage() {
     }
   }, [year]);
 
+  const loadNorms = useCallback(async () => {
+    const res = await fetch(`/api/admin/month-norm?year=${year}`);
+    if (res.ok) {
+      const data: { months: MonthNorm[] } = await res.json();
+      setNorms(data.months ?? []);
+      const drafts: Record<number, string> = {};
+      for (const m of data.months ?? []) {
+        drafts[m.month] = m.override != null ? String(m.override) : "";
+      }
+      setNormDrafts(drafts);
+    }
+  }, [year]);
+
   useEffect(() => {
     loadHolidays();
-  }, [loadHolidays]);
+    loadNorms();
+  }, [loadHolidays, loadNorms]);
+
+  async function saveNorm(month: number) {
+    const raw = (normDrafts[month] ?? "").trim();
+    const override = raw === "" ? null : parseFloat(raw);
+    const res = await fetch("/api/admin/month-norm", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ year, month, override }),
+    });
+    if (res.ok) {
+      toast.success("Норма сохранена");
+      loadNorms();
+    } else {
+      toast.error("Ошибка сохранения нормы");
+    }
+  }
 
   function toggleDate(dateStr: string) {
     setHolidays((prev) => {
@@ -56,8 +96,10 @@ export default function HolidaysPage() {
       }),
     });
     setLoading(false);
-    if (res.ok) toast.success("Праздники сохранены");
-    else toast.error("Ошибка");
+    if (res.ok) {
+      toast.success("Праздники сохранены");
+      loadNorms();
+    } else toast.error("Ошибка");
   }
 
   return (
@@ -142,6 +184,66 @@ export default function HolidaysPage() {
           );
         })}
       </div>
+
+      <Card>
+        <CardHeader className="py-3 px-4">
+          <CardTitle className="text-base">
+            Норма часов по месяцам ({year})
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="px-4 pb-4">
+          <p className="text-sm text-muted-foreground mb-3">
+            «Эталон» считается автоматически из праздников (будни×6, минус
+            праздники, предпраздничный день короче на час) и используется как
+            источник истины при генерации. Заполните «Своё значение», только если
+            нужно переопределить эталон — оно станет дефолтом для генерации
+            (которое всё ещё можно поменять на отдельном прогоне).
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {norms.map((n) => {
+              const draft = normDrafts[n.month] ?? "";
+              const changed =
+                (n.override != null ? String(n.override) : "") !== draft.trim();
+              return (
+                <div
+                  key={n.month}
+                  className="flex items-center gap-2 rounded border px-3 py-2 text-sm"
+                >
+                  <span className="w-20 font-medium">
+                    {MONTH_NAMES[n.month - 1]}
+                  </span>
+                  <span className="text-muted-foreground tabular-nums w-14">
+                    {n.computed}ч
+                  </span>
+                  <Input
+                    type="number"
+                    value={draft}
+                    placeholder="свои"
+                    className="h-8 w-20"
+                    min={20}
+                    max={400}
+                    onChange={(e) =>
+                      setNormDrafts((p) => ({
+                        ...p,
+                        [n.month]: e.target.value,
+                      }))
+                    }
+                  />
+                  <Button
+                    size="sm"
+                    variant={changed ? "default" : "outline"}
+                    className="h-8"
+                    disabled={!changed}
+                    onClick={() => saveNorm(n.month)}
+                  >
+                    OK
+                  </Button>
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 }

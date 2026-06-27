@@ -98,6 +98,9 @@ export default async function PreferencesPage() {
         avoidSamePost: prevPref.avoidSamePost,
         avoidWith: safeJson(prevPref.avoidWith, []),
         preferWith: safeJson(prevPref.preferWith, []),
+        availabilityMode: prevPref.availabilityMode,
+        availableDays: safeJson<number[]>(prevPref.availableDays, []),
+        postVarietyPref: prevPref.postVarietyPref,
       }
     : null;
 
@@ -159,6 +162,9 @@ export default async function PreferencesPage() {
                 avoidSamePost: existing.avoidSamePost,
                 avoidWith: safeJson(existing.avoidWith, []),
                 preferWith: safeJson(existing.preferWith, []),
+                availabilityMode: existing.availabilityMode,
+                availableDays: safeJson<number[]>(existing.availableDays, []),
+                postVarietyPref: existing.postVarietyPref,
               }
             : null
         }

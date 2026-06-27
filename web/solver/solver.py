@@ -73,6 +73,7 @@ DEFAULT_WEIGHTS: dict[str, int] = {
     "avoid_with": 300,           # штраф за совместную смену с нежелательным коллегой
     "prefer_with": 40,           # награда за совместную смену с желаемым коллегой
     "same_post_repeat": 40,      # штраф за один и тот же аппарат два дня подряд
+    "same_post_keep": 40,        # НАГРАДА за один и тот же аппарат подряд («хочу один»)
     "min_shifts_short": 600,     # штраф за каждую смену ниже желаемого минимума
     "dow_shift_avoid": 3000,     # сильный мягкий запрет типа смены в день недели
     "prefer_night_bias": 600,    # сила режима «предпочитаю ночные»
@@ -935,11 +936,14 @@ class ScheduleSolver:
         same_post_repeat (можно выключить глобально = 0).
         """
         w = self.W["same_post_repeat"]
-        if not w:
+        w_keep = self.W["same_post_keep"]
+        if not w and not w_keep:
             return
         days = self.config.days
         for e, emp in enumerate(self.employees):
-            if not getattr(emp, "avoid_same_post", False):
+            avoid = getattr(emp, "avoid_same_post", False)
+            keep = getattr(emp, "prefer_same_post", False)
+            if not (avoid and w) and not (keep and w_keep):
                 continue
             for p in range(len(self.posts)):
                 for i in range(len(days) - 1):
@@ -950,7 +954,11 @@ class ScheduleSolver:
                         continue
                     both = self.model.new_bool_var(f"samepost_{e}_{p}_{d}")
                     self.model.add_min_equality(both, [a, b])
-                    self._penalties.append(w * both)
+                    if avoid and w:
+                        self._penalties.append(w * both)
+                    if keep and w_keep:
+                        # Награда за тот же аппарат в соседние рабочие дни.
+                        self._penalties.append(-w_keep * both)
 
     def _consecutive_sequencing(self):
         """Персональная очерёдность смен + ЖЁСТКИЙ потолок дней подряд.

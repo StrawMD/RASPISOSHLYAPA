@@ -103,14 +103,6 @@ function isShiftTimeMode(v: unknown): v is ShiftTimeMode {
   );
 }
 
-const CONSECUTIVE_OPTIONS = [
-  { value: "avoid", label: "Не люблю смены подряд" },
-  { value: "neutral", label: "Без разницы" },
-  { value: "prefer_2", label: "Лучше по 2 смены подряд" },
-  { value: "prefer_3", label: "Лучше по 3 смены подряд" },
-  { value: "prefer_4", label: "Лучше по 4 смены подряд" },
-] as const;
-
 const MEDICAL_OPTIONS = [
   { value: "none", label: "Нет ограничений" },
   { value: "no_night", label: "Нельзя ночные смены" },
@@ -118,11 +110,34 @@ const MEDICAL_OPTIONS = [
   { value: "day_only", label: "Только дневные смены" },
 ] as const;
 
-const LOAD_OPTIONS = [
-  { value: "less", label: "Поменьше, чем обычно" },
-  { value: "normal", label: "Как обычно" },
-  { value: "more", label: "Побольше — готов(а) подработать" },
+const VARIETY_OPTIONS = [
+  { value: "neutral", label: "Без разницы" },
+  { value: "same", label: "Хочу один и тот же аппарат" },
+  { value: "variety", label: "Хочу разные аппараты" },
 ] as const;
+
+// Лимиты на отмечаемые даты для ОСНОВНЫХ сотрудников (ставка ≥ 1.0):
+// максимум подряд и максимум всего — отдельно для «не могу» и «лучше не ставить».
+const DATE_MAX_CONSEC = 4;
+const DATE_MAX_TOTAL = 12;
+
+function varietyLabel(v: string) {
+  return VARIETY_OPTIONS.find((o) => o.value === v)?.label ?? v;
+}
+
+/** Максимум подряд идущих дней в наборе. */
+function maxConsecutiveInSet(set: Set<number>): number {
+  const arr = Array.from(set).sort((a, b) => a - b);
+  let run = 0;
+  let max = 0;
+  let prev = -10;
+  for (const d of arr) {
+    run = d === prev + 1 ? run + 1 : 1;
+    if (run > max) max = run;
+    prev = d;
+  }
+  return max;
+}
 
 /**
  * Backward-compat: derive the aggregate mode from the legacy per-24h-post
@@ -151,14 +166,8 @@ function prefLabel(v: string) {
 
 // Лейблы для триггеров селектов (Base UI отображает «сырое» value, если не
 // передать функцию-ребёнка — поэтому подставляем человекочитаемый текст).
-function consecLabel(v: string) {
-  return CONSECUTIVE_OPTIONS.find((o) => o.value === v)?.label ?? v;
-}
 function medicalLabel(v: string) {
   return MEDICAL_OPTIONS.find((o) => o.value === v)?.label ?? v;
-}
-function loadLabel(v: string) {
-  return LOAD_OPTIONS.find((o) => o.value === v)?.label ?? v;
 }
 
 type Post = {
@@ -203,6 +212,9 @@ interface Props {
     avoidSamePost: boolean;
     avoidWith: string[];
     preferWith: string[];
+    availabilityMode?: string | null;
+    availableDays?: number[];
+    postVarietyPref?: string | null;
   } | null;
   posts: Post[];
   has24hPostsInSystem: boolean;
@@ -240,6 +252,9 @@ interface Props {
     avoidSamePost: boolean;
     avoidWith: string[];
     preferWith: string[];
+    availabilityMode?: string | null;
+    availableDays?: number[];
+    postVarietyPref?: string | null;
   } | null;
 }
 
@@ -312,31 +327,20 @@ export function PreferencesForm({
   const [postShiftPrefs, setPostShiftPrefs] = useState<
     Record<string, Record<string, string>>
   >(existing?.postShiftPrefs ?? {});
-  // Не ставить тип смены в день недели: {dow("1".."7"): {full?|night?: true}}
-  const [dowShiftAvoid, setDowShiftAvoid] = useState<
-    Record<string, Record<string, boolean>>
-  >(existing?.dowShiftAvoid ?? {});
   const [unavailable, setUnavailable] = useState<Set<number>>(
     new Set(existing?.unavailableDays ?? []),
   );
   const [desired, setDesired] = useState<Set<number>>(
     new Set(existing?.desiredDates ?? []),
   );
-  const [weekdayPref, setWeekdayPref] = useState(
-    existing?.weekdayPref ?? "null",
-  );
-  const [weekendPref, setWeekendPref] = useState(
-    existing?.weekendPref ?? "null",
-  );
   const [dowPrefs, setDowPrefs] = useState<Record<string, string>>(
     existing?.dayOfWeekPrefs ?? {},
   );
   const [comment, setComment] = useState(existing?.comment ?? "");
 
-  // Профильные (стабильные) поля.
-  const [consecutivePref, setConsecutivePref] = useState(
-    employee.consecutivePref || "avoid",
-  );
+  // Профильные (стабильные) поля. Очерёдность смен из анкеты убрана —
+  // значение сохраняем как есть (правится администратором при необходимости).
+  const [consecutivePref] = useState(employee.consecutivePref || "avoid");
   const [medicalRestriction, setMedicalRestriction] = useState(
     employee.medicalRestriction || "none",
   );
@@ -349,18 +353,23 @@ export function PreferencesForm({
   const [softUnavailable, setSoftUnavailable] = useState<Set<number>>(
     new Set(existing?.softUnavailableDays ?? []),
   );
-  const [loadPref, setLoadPref] = useState(existing?.loadPref ?? "normal");
   const [maxNightsStr, setMaxNightsStr] = useState(
     existing?.maxNights != null ? String(existing.maxNights) : "",
   );
   const [maxFullStr, setMaxFullStr] = useState(
     existing?.maxFull != null ? String(existing.maxFull) : "",
   );
-  const [minShiftsStr, setMinShiftsStr] = useState(
-    existing?.minShifts != null ? String(existing.minShifts) : "",
+  const [postVarietyPref, setPostVarietyPref] = useState<string>(
+    existing?.postVarietyPref ??
+      (existing?.avoidSamePost ? "variety" : "neutral"),
   );
-  const [avoidSamePost, setAvoidSamePost] = useState(
-    existing?.avoidSamePost ?? false,
+  // Режим доступности полставочника/совместителя: blacklist (НЕ могу в эти
+  // даты) или whitelist (работаю ТОЛЬКО в эти даты).
+  const [availabilityMode, setAvailabilityMode] = useState<string>(
+    existing?.availabilityMode === "whitelist" ? "whitelist" : "blacklist",
+  );
+  const [availableDays, setAvailableDays] = useState<Set<number>>(
+    new Set(existing?.availableDays ?? []),
   );
   const [avoidWith, setAvoidWith] = useState<string[]>(
     existing?.avoidWith ?? [],
@@ -377,7 +386,6 @@ export function PreferencesForm({
   const readOnly = !isAdmin && (isLocked || isPastDeadline);
 
   const numDays = getDaysInMonth(year, month);
-  const maxConsec = rate >= 1.0 ? 3 : 6;
 
   // Для полставочников: сколько свободных рабочих дней нужно оставить под их
   // ставку (чтобы «нежелательными» не закрасить весь месяц).
@@ -458,17 +466,45 @@ export function PreferencesForm({
     });
   }
 
+  function toggleAvailable(day: number) {
+    if (readOnly) return;
+    setAvailableDays((prev) => {
+      const next = new Set(prev);
+      if (next.has(day)) next.delete(day);
+      else next.add(day);
+      return next;
+    });
+  }
+
   function toggleUnavailable(day: number) {
     if (readOnly) return;
     setUnavailable((prev) => {
       const next = new Set(prev);
       if (next.has(day)) {
         next.delete(day);
-      } else {
-        next.add(day);
-        removeFrom(setDesired, day);
-        removeFrom(setSoftUnavailable, day);
+        return next;
       }
+      // Лимиты для основных сотрудников (ставка ≥ 1.0): макс. подряд и всего.
+      // Полставочники/совместители — без лимита (по согласованию).
+      if (!partTime) {
+        if (next.size + 1 > DATE_MAX_TOTAL) {
+          toast.warning(
+            `Максимум ${DATE_MAX_TOTAL} дней «не могу» за месяц. Больше — согласование с админом.`,
+          );
+          return prev;
+        }
+        const probe = new Set(next);
+        probe.add(day);
+        if (maxConsecutiveInSet(probe) > DATE_MAX_CONSEC) {
+          toast.warning(
+            `Максимум ${DATE_MAX_CONSEC} дней «не могу» подряд. Больше — согласование с админом.`,
+          );
+          return prev;
+        }
+      }
+      next.add(day);
+      removeFrom(setDesired, day);
+      removeFrom(setSoftUnavailable, day);
       return next;
     });
   }
@@ -491,6 +527,22 @@ export function PreferencesForm({
             `Оставьте минимум ${minFreeDays} свободных дней под ставку ${round2(
               targetRate,
             )} — иначе график не наберёт ваши часы. Больше отмечать нельзя.`,
+          );
+          return prev;
+        }
+      } else {
+        // Основные сотрудники: те же лимиты, что и для «не могу».
+        if (prev.size + 1 > DATE_MAX_TOTAL) {
+          toast.warning(
+            `Максимум ${DATE_MAX_TOTAL} дней «лучше не ставить» за месяц.`,
+          );
+          return prev;
+        }
+        const probe = new Set(prev);
+        probe.add(day);
+        if (maxConsecutiveInSet(probe) > DATE_MAX_CONSEC) {
+          toast.warning(
+            `Максимум ${DATE_MAX_CONSEC} дней «лучше не ставить» подряд.`,
           );
           return prev;
         }
@@ -527,19 +579,6 @@ export function PreferencesForm({
     });
   }
 
-  function toggleDowShiftAvoid(dowKey: string, kind: "full" | "night") {
-    if (readOnly) return;
-    setDowShiftAvoid((prev) => {
-      const cur = { ...(prev[dowKey] ?? {}) };
-      if (cur[kind]) delete cur[kind];
-      else cur[kind] = true;
-      const next = { ...prev };
-      if (Object.keys(cur).length === 0) delete next[dowKey];
-      else next[dowKey] = cur;
-      return next;
-    });
-  }
-
   function toggleAvoidWith(name: string) {
     if (readOnly) return;
     setAvoidWith((prev) =>
@@ -563,24 +602,25 @@ export function PreferencesForm({
     }
     setPostPrefs(previous.postPreferences ?? {});
     setPostShiftPrefs(previous.postShiftPrefs ?? {});
-    setDowShiftAvoid(previous.dowShiftAvoid ?? {});
-    setWeekdayPref(previous.weekdayPref ?? "null");
-    setWeekendPref(previous.weekendPref ?? "null");
     setDowPrefs(previous.dayOfWeekPrefs ?? {});
     setSoftUnavailable(new Set(previous.softUnavailableDays ?? []));
-    setLoadPref(previous.loadPref ?? "normal");
     setMaxNightsStr(previous.maxNights != null ? String(previous.maxNights) : "");
     setMaxFullStr(previous.maxFull != null ? String(previous.maxFull) : "");
-    setMinShiftsStr(
-      previous.minShifts != null ? String(previous.minShifts) : "",
+    setPostVarietyPref(
+      previous.postVarietyPref ?? (previous.avoidSamePost ? "variety" : "neutral"),
     );
-    setAvoidSamePost(previous.avoidSamePost ?? false);
     setAvoidWith(previous.avoidWith ?? []);
     setPreferWith(previous.preferWith ?? []);
     toast.success("Скопировано с прошлого месяца — проверьте и сохраните");
   }
 
   function getConsecutiveWarning(): string | null {
+    // У полставочников/совместителей лимитов на даты нет — они задают
+    // доступность строго (см. режим whitelist/blacklist).
+    if (partTime) return null;
+    if (unavailable.size > DATE_MAX_TOTAL) {
+      return `Отмечено ${unavailable.size} дней «не могу» (макс. ${DATE_MAX_TOTAL}).`;
+    }
     const arr = Array.from(unavailable).sort((a, b) => a - b);
     if (arr.length === 0) return null;
     let run = 1;
@@ -591,8 +631,8 @@ export function PreferencesForm({
         if (run > maxRun) maxRun = run;
       } else run = 1;
     }
-    if (maxRun > maxConsec) {
-      return `${maxRun} дней подряд (макс. ${maxConsec}). ${rate >= 1.0 ? "Более 3 дней подряд требует согласования с администратором." : ""}`;
+    if (maxRun > DATE_MAX_CONSEC) {
+      return `${maxRun} дней подряд (макс. ${DATE_MAX_CONSEC}).`;
     }
     return null;
   }
@@ -675,6 +715,18 @@ export function PreferencesForm({
       }
 
       if (!readOnly) {
+        // Белый список без единого дня = человек не работает весь месяц.
+        if (
+          partTime &&
+          availabilityMode === "whitelist" &&
+          availableDays.size === 0
+        ) {
+          toast.error(
+            "Отметьте хотя бы один день, когда можете работать",
+          );
+          return;
+        }
+
         const visibleIds = new Set(visiblePosts.map((p) => p.id));
         const twentyFourIds = new Set(
           visiblePosts.filter((p) => p.shiftHours === 24).map((p) => p.id),
@@ -713,19 +765,35 @@ export function PreferencesForm({
             pref24hNight: null,
             postPreferences: filteredPostPrefs,
             postShiftPrefs: filteredPostShiftPrefs,
-            dowShiftAvoid: has24h ? dowShiftAvoid : {},
-            unavailableDays: Array.from(unavailable).sort((a, b) => a - b),
-            weekdayPref: weekdayPref === "null" ? null : weekdayPref,
-            weekendPref: weekendPref === "null" ? null : weekendPref,
+            // Удалённые из анкеты факторы: больше не задаются сотрудником.
+            dowShiftAvoid: {},
+            unavailableDays:
+              partTime && availabilityMode === "whitelist"
+                ? []
+                : Array.from(unavailable).sort((a, b) => a - b),
+            weekdayPref: null,
+            weekendPref: null,
             dayOfWeekPrefs: dowPrefs,
             desiredDates: Array.from(desired).sort((a, b) => a - b),
             comment: comment || null,
-            softUnavailableDays: Array.from(softUnavailable).sort((a, b) => a - b),
-            loadPref: loadPref === "normal" ? null : loadPref,
+            softUnavailableDays:
+              partTime && availabilityMode === "whitelist"
+                ? []
+                : Array.from(softUnavailable).sort((a, b) => a - b),
+            loadPref: null,
             maxNights: parseCap(maxNightsStr),
             maxFull: parseCap(maxFullStr),
-            minShifts: parseCap(minShiftsStr),
-            avoidSamePost,
+            minShifts: null,
+            // Разнообразие аппаратов: 3-позиция. avoidSamePost оставлен для
+            // обратной совместимости с солвером (variety → true).
+            postVarietyPref:
+              postVarietyPref === "neutral" ? null : postVarietyPref,
+            avoidSamePost: postVarietyPref === "variety",
+            availabilityMode: partTime ? availabilityMode : null,
+            availableDays:
+              partTime && availabilityMode === "whitelist"
+                ? Array.from(availableDays).sort((a, b) => a - b)
+                : [],
             avoidWith,
             preferWith,
           }),
@@ -986,39 +1054,12 @@ export function PreferencesForm({
 
       <Card>
         <CardHeader className="pb-2">
-          <CardTitle className="text-base">
-            Очерёдность смен и ограничения
-          </CardTitle>
+          <CardTitle className="text-base">Ограничения</CardTitle>
           <CardDescription>
-            Как вам удобнее чередовать смены и есть ли медицинские/правовые
-            ограничения.
+            Медицинские/правовые ограничения и регулярная недоступность.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="space-y-1.5">
-            <Label>Смены подряд</Label>
-            <Select
-              value={consecutivePref}
-              onValueChange={(v) => v && setConsecutivePref(v)}
-              disabled={readOnly}
-            >
-              <SelectTrigger className="w-full sm:w-80">
-                <SelectValue>{consecLabel}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {CONSECUTIVE_OPTIONS.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>
-                    {o.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-[11px] text-muted-foreground">
-              Кто-то не любит работать в соседние дни, а кому-то удобнее
-              «блоками» — несколько смен подряд, потом длинный отдых.
-            </p>
-          </div>
-
           <div className="space-y-1.5">
             <Label>Медицинские / правовые ограничения</Label>
             <Select
@@ -1084,73 +1125,41 @@ export function PreferencesForm({
           <CardHeader className="pb-2">
             <CardTitle className="text-base">Разнообразие аппаратов</CardTitle>
             <CardDescription>
-              Предпочтения «на каком аппарате работать» теперь ведёт
-              администратор единым набором, поэтому из анкеты они убраны. Если у
-              вас есть пожелания по аппаратам — скажите составителю графика.
+              Хотите работать на одном и том же аппарате или, наоборот, на разных?
+              Конкретные аппараты ведёт администратор — скажите ему отдельно.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <Checkbox
-                checked={avoidSamePost}
-                disabled={readOnly}
-                onCheckedChange={(c) => setAvoidSamePost(!!c)}
-              />
-              Не ставить меня на один и тот же аппарат подряд (хочу разнообразия, работать на разных аппаратах)
-            </label>
-          </CardContent>
-        </Card>
-      )}
-
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">Нагрузка в этом месяце</CardTitle>
-          <CardDescription>
-            Разовое пожелание именно на {MONTH_NAMES[month - 1]} — не меняет
-            вашу постоянную ставку.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="space-y-1.5">
-            <Label>Хочу работать</Label>
             <Select
-              value={loadPref}
-              onValueChange={(v) => v && setLoadPref(v)}
+              value={postVarietyPref}
+              onValueChange={(v) => v && setPostVarietyPref(v)}
               disabled={readOnly}
             >
               <SelectTrigger className="w-full sm:w-80">
-                <SelectValue>{loadLabel}</SelectValue>
+                <SelectValue>{varietyLabel}</SelectValue>
               </SelectTrigger>
               <SelectContent>
-                {LOAD_OPTIONS.map((o) => (
+                {VARIETY_OPTIONS.map((o) => (
                   <SelectItem key={o.value} value={o.value}>
                     {o.label}
                   </SelectItem>
                 ))}
               </SelectContent>
             </Select>
-          </div>
+          </CardContent>
+        </Card>
+      )}
 
-          <div className="space-y-1.5 sm:max-w-xs">
-            <Label>Минимум смен за месяц</Label>
-            <Input
-              type="text"
-              inputMode="numeric"
-              placeholder="без минимума"
-              value={minShiftsStr}
-              onChange={(e) =>
-                setMinShiftsStr(e.target.value.replace(/\D/g, "").slice(0, 2))
-              }
-              disabled={readOnly}
-            />
-            <p className="text-[11px] text-muted-foreground">
-              «Хочу заработать»: график постарается дать вам не меньше этого
-              числа смен, если хватает свободных мест (мягкое пожелание, не
-              гарантия).
-            </p>
-          </div>
-
-          {has24h && (
+      {has24h && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">Лимиты смен</CardTitle>
+            <CardDescription>
+              Необязательно. Личный потолок суточных/ночных именно на{" "}
+              {MONTH_NAMES[month - 1]}.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5">
                 <Label>Не больше суточных (с) за месяц</Label>
@@ -1179,55 +1188,9 @@ export function PreferencesForm({
                 />
               </div>
             </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="pb-2">
-          <CardTitle className="text-base">Будни / Выходные</CardTitle>
-        </CardHeader>
-        <CardContent className="grid grid-cols-2 gap-4">
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium">Будни</label>
-            <Select
-              value={weekdayPref}
-              onValueChange={(v) => v && setWeekdayPref(v)}
-              disabled={readOnly}
-            >
-              <SelectTrigger>
-                <SelectValue>{prefLabel}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {PREF_OPTIONS.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>
-                    <span className={PREF_COLOR[o.value] ?? ""}>{o.label}</span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="space-y-1.5">
-            <label className="text-sm font-medium">Выходные</label>
-            <Select
-              value={weekendPref}
-              onValueChange={(v) => v && setWeekendPref(v)}
-              disabled={readOnly}
-            >
-              <SelectTrigger>
-                <SelectValue>{prefLabel}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {PREF_OPTIONS.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>
-                    <span className={PREF_COLOR[o.value] ?? ""}>{o.label}</span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader className="pb-2">
@@ -1283,46 +1246,84 @@ export function PreferencesForm({
         </CardContent>
       </Card>
 
-      {has24h && (
-        <Card>
+      {partTime && (
+        <Card className="border-sky-500/40">
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">
-              Сутки / ночи по дням недели
-            </CardTitle>
+            <CardTitle className="text-base">Как вы задаёте доступность</CardTitle>
             <CardDescription>
-              Если в какой-то день недели вам неудобны суточные или ночные
-              смены — отметьте. Дневные в этот день остаются доступными.
-              Напр. «в пятницу не сутки».
+              Для полставки/совместительства пожелания по датам соблюдаются
+              <strong> строго</strong>. Выберите удобный способ.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="space-y-1.5">
-              {DAY_NAMES.map((name, i) => {
-                const key = String(i + 1);
-                const flags = dowShiftAvoid[key] ?? {};
+            <Select
+              value={availabilityMode}
+              onValueChange={(v) => v && setAvailabilityMode(v)}
+              disabled={readOnly}
+            >
+              <SelectTrigger className="w-full sm:w-96">
+                <SelectValue>
+                  {(v: string) =>
+                    v === "whitelist"
+                      ? "Работаю ТОЛЬКО в выбранные даты"
+                      : "НЕ могу в выбранные даты (всё остальное доступно)"
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="blacklist">
+                  НЕ могу в выбранные даты (всё остальное доступно)
+                </SelectItem>
+                <SelectItem value="whitelist">
+                  Работаю ТОЛЬКО в выбранные даты
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </CardContent>
+        </Card>
+      )}
+
+      {partTime && availabilityMode === "whitelist" && (
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-base">
+              Даты, когда МОГУ работать
+            </CardTitle>
+            <CardDescription>
+              Отмечено: {availableDays.size}. Во все остальные дни месяца вас не
+              поставят (жёстко).
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-7 gap-px text-center text-xs font-medium text-muted-foreground mb-1">
+              {DAY_NAMES.map((d) => (
+                <div key={d} className="py-0.5">
+                  {d}
+                </div>
+              ))}
+            </div>
+            <div className="grid grid-cols-7 gap-1">
+              {cells.map((day, i) => {
+                if (day === null)
+                  return <div key={`a-${i}`} className="h-8" />;
+                const isA = availableDays.has(day);
+                const date = new Date(year, month - 1, day);
+                const weekend = date.getDay() === 0 || date.getDay() === 6;
                 return (
-                  <div
-                    key={key}
-                    className="flex items-center gap-3 rounded border px-3 py-1.5 text-sm"
+                  <button
+                    key={day}
+                    onClick={() => toggleAvailable(day)}
+                    disabled={readOnly}
+                    className={`h-8 rounded text-xs font-medium transition-colors ${
+                      isA
+                        ? "bg-green-600/30 text-green-400 ring-1 ring-green-500/50"
+                        : weekend
+                          ? "bg-red-950/20 hover:bg-red-900/30"
+                          : "bg-muted/30 hover:bg-muted"
+                    } ${readOnly ? "cursor-default" : "cursor-pointer"}`}
                   >
-                    <span className="flex-1 font-medium">{name}</span>
-                    <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-                      <Checkbox
-                        checked={!!flags.full}
-                        disabled={readOnly}
-                        onCheckedChange={() => toggleDowShiftAvoid(key, "full")}
-                      />
-                      Не сутки
-                    </label>
-                    <label className="flex items-center gap-1.5 text-xs cursor-pointer">
-                      <Checkbox
-                        checked={!!flags.night}
-                        disabled={readOnly}
-                        onCheckedChange={() => toggleDowShiftAvoid(key, "night")}
-                      />
-                      Не ночь
-                    </label>
-                  </div>
+                    {day}
+                  </button>
                 );
               })}
             </div>
@@ -1372,6 +1373,7 @@ export function PreferencesForm({
         </CardContent>
       </Card>
 
+      {!(partTime && availabilityMode === "whitelist") && (
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">
@@ -1379,9 +1381,9 @@ export function PreferencesForm({
           </CardTitle>
           <CardDescription>
             Отмечено: {unavailable.size}.
-            {rate >= 1.0
-              ? " Основной: макс. 3 дня подряд (больше — согласование с админом)"
-              : ` Совместитель: макс. ${maxConsec} дней подряд`}
+            {partTime
+              ? " Соблюдается строго, без ограничения количества."
+              : ` Макс. ${DATE_MAX_CONSEC} дней подряд и ${DATE_MAX_TOTAL} всего.`}
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -1423,7 +1425,9 @@ export function PreferencesForm({
           </div>
         </CardContent>
       </Card>
+      )}
 
+      {!(partTime && availabilityMode === "whitelist") && (
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">
@@ -1494,6 +1498,7 @@ export function PreferencesForm({
           </div>
         </CardContent>
       </Card>
+      )}
 
       {coworkers.length > 0 && (
         <Card>
