@@ -228,6 +228,8 @@ export function ScheduleEditPage() {
   const [quickAddName, setQuickAddName] = useState<string>("");
   const [quickAddKind, setQuickAddKind] = useState<ShiftKind>("full");
   const [quickPickerOpen, setQuickPickerOpen] = useState(false);
+  // Режим быстрой фиксации: клик по ячейке закрепляет/снимает всех её людей.
+  const [fixMode, setFixMode] = useState(false);
   // Целевое число людей в ячейке (на момент открытия) = занято + недобор.
   // Подсветка «дыр» гаснет по мере дозаполнения в текущей сессии.
   const [cellTargets, setCellTargets] = useState<Record<string, number>>({});
@@ -606,6 +608,42 @@ export function ScheduleEditPage() {
     setSwapMode(false);
     setSwapSource(null);
     setHighlightName("");
+    setFixMode(false);
+  }
+
+  // Быстрая фиксация: клик по ячейке закрепляет всех её людей для генерации;
+  // если все уже зафиксированы — снимает фиксы. Удобно «прибить» сразу много
+  // ячеек.
+  async function quickToggleFixCell(
+    day: number,
+    postId: string,
+    people: string[],
+  ) {
+    if (people.length === 0) return;
+    const fixedNow = fixedSlots[String(day)]?.[postId] ?? [];
+    const allFixed = people.every((l) => fixedNow.includes(l));
+    const pin = !allFixed;
+    let ok = 0;
+    for (const label of people) {
+      const isFixed = fixedNow.includes(label);
+      if (pin && isFixed) continue;
+      if (!pin && !isFixed) continue;
+      const op: FixedEditOp = {
+        day,
+        postId,
+        editType: pin ? "assign" : "remove",
+        oldValue: pin ? null : label,
+        newValue: pin ? label : null,
+      };
+      if (await runFixedEdit(op)) {
+        ok += 1;
+        setHistStack((s) => [...s, { scope: "fixed", op }]);
+      }
+    }
+    if (ok > 0) {
+      setHistFuture([]);
+      toast.success(pin ? `Закреплено: ${ok}` : `Снято: ${ok}`);
+    }
   }
 
   async function undoEdit() {
@@ -779,6 +817,7 @@ export function ScheduleEditPage() {
               setSwapMode((v) => !v);
               setSwapSource(null);
               setQuickAddName("");
+              setFixMode(false);
             }}
             title="Обмен двух людей местами: включите режим и кликните две ячейки"
           >
@@ -788,6 +827,21 @@ export function ScheduleEditPage() {
                 ? "Выберите вторую…"
                 : "Обмен: вкл"
               : "Обмен"}
+          </Button>
+          <Button
+            variant={fixMode ? "default" : "outline"}
+            size="sm"
+            className="h-8 px-2 text-xs"
+            onClick={() => {
+              setFixMode((v) => !v);
+              setQuickAddName("");
+              setSwapMode(false);
+              setSwapSource(null);
+              setHighlightName("");
+            }}
+            title="Быстрая фиксация: кликайте по ячейкам, чтобы закрепить/снять их для генерации"
+          >
+            🔒 {fixMode ? "Фиксация: вкл" : "Фиксация"}
           </Button>
           <Popover open={quickPickerOpen} onOpenChange={setQuickPickerOpen}>
             <PopoverTrigger
@@ -936,6 +990,27 @@ export function ScheduleEditPage() {
         </div>
       )}
 
+      {fixMode && (
+        <div className="sticky top-0 z-20 flex flex-wrap items-center gap-2 rounded-md border border-sky-400 bg-sky-50 dark:bg-sky-950/30 px-3 py-2 text-sm">
+          <span className="text-base leading-none">🔒</span>
+          <span>
+            Быстрая фиксация: кликайте по ячейкам, чтобы закрепить всех людей
+            ячейки для генерации (повторный клик по закреплённой ячейке —
+            снять).
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2 ml-auto"
+            onClick={() => setFixMode(false)}
+            title="Выключить быструю фиксацию"
+          >
+            <X className="h-3.5 w-3.5 mr-1" />
+            Выйти
+          </Button>
+        </div>
+      )}
+
       <div className="overflow-x-auto">
         <table className="w-full text-xs border-collapse min-w-[800px]">
           <thead>
@@ -1002,7 +1077,42 @@ export function ScheduleEditPage() {
                               −{hole}
                             </span>
                           )}
-                          {quickAddName ? (
+                          {fixMode ? (
+                            people.length === 0 ? (
+                              <span className="text-muted-foreground text-[10px]">
+                                —
+                              </span>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  quickToggleFixCell(d, p.id, people)
+                                }
+                                className="inline-flex flex-wrap items-center gap-0.5 rounded border border-dashed border-sky-400 px-1 py-0.5 hover:bg-sky-500/10 transition-colors"
+                                title="Кликните, чтобы закрепить/снять всю ячейку"
+                              >
+                                {people.map(
+                                  (person: string, idx: number) => {
+                                    const isFixed =
+                                      fixedKeys.has(
+                                        `${d}:${p.id}:${person}`,
+                                      ) && !versionIgnoredFixed;
+                                    return (
+                                      <span
+                                        key={idx}
+                                        className={`inline-flex items-center gap-0.5 rounded border px-1 py-px text-[11px] ${
+                                          isFixed ? FIXED_CLASS : "opacity-70"
+                                        }`}
+                                      >
+                                        {isFixed && "🔒"}
+                                        {person}
+                                      </span>
+                                    );
+                                  },
+                                )}
+                              </button>
+                            )
+                          ) : quickAddName ? (
                             <>
                               {people.map((person: string, idx: number) => {
                                 const bn = stripSuffix(person);

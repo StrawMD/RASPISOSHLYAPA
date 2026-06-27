@@ -8,6 +8,13 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { toast } from "sonner";
 import {
   Loader2,
@@ -19,6 +26,7 @@ import {
   Save,
   ChevronDown,
   ChevronUp,
+  UserPlus,
 } from "lucide-react";
 import type { FixedSlotsMap } from "@/lib/validate-fixed-slots";
 import {
@@ -53,6 +61,12 @@ const KIND_LABELS: { key: ShiftKind; label: string }[] = [
   { key: "night", label: "ночь (н)" },
 ];
 
+const KIND_SHORT: Record<ShiftKind, string> = {
+  full: "с",
+  day: "д",
+  night: "н",
+};
+
 export function FixedSlotsEditor({
   year,
   month,
@@ -67,6 +81,10 @@ export function FixedSlotsEditor({
   const [dirty, setDirty] = useState(false);
   const [showJson, setShowJson] = useState(false);
   const [jsonText, setJsonText] = useState("{}");
+  // Режим быстрой фиксации: выбранная фамилия проставляется кликом по ячейкам.
+  const [quickAddName, setQuickAddName] = useState("");
+  const [quickAddKind, setQuickAddKind] = useState<ShiftKind>("full");
+  const [quickPickerOpen, setQuickPickerOpen] = useState(false);
 
   const [hist, setHist] = useState<{
     past: FixedSlotsMap[];
@@ -172,6 +190,20 @@ export function FixedSlotsEditor({
     );
   }
 
+  function quickAssignFixed(day: number, postId: string, shiftHours: number) {
+    if (!quickAddName) return;
+    const label = formatScheduleLabel(
+      quickAddName,
+      shiftHours,
+      shiftHours === 24 ? quickAddKind : undefined,
+    );
+    patchEdit({ day, postId, editType: "assign", oldValue: null, newValue: label });
+  }
+
+  function quickRemoveFixed(day: number, postId: string, label: string) {
+    patchEdit({ day, postId, editType: "remove", oldValue: label, newValue: null });
+  }
+
   async function save() {
     setSaving(true);
     try {
@@ -245,7 +277,81 @@ export function FixedSlotsEditor({
         <Button variant="outline" size="sm" onClick={load}>
           Перезагрузить
         </Button>
+        <Popover open={quickPickerOpen} onOpenChange={setQuickPickerOpen}>
+          <PopoverTrigger
+            className={cn(
+              "inline-flex items-center h-8 px-2 text-xs rounded-md border transition-colors",
+              quickAddName
+                ? "bg-primary text-primary-foreground border-primary"
+                : "bg-background border-input hover:bg-muted",
+            )}
+            title="Быстрая фиксация: выберите фамилию и кликайте по ячейкам"
+          >
+            <UserPlus className="mr-1 h-3.5 w-3.5" />
+            Быстрая фиксация
+          </PopoverTrigger>
+          <PopoverContent className="w-64 p-0" align="start">
+            <Command>
+              <CommandInput placeholder="Фамилия…" />
+              <CommandList>
+                <CommandEmpty>Не найдено</CommandEmpty>
+                {employees.map((e) => (
+                  <CommandItem
+                    key={e.id}
+                    value={e.name}
+                    onSelect={() => {
+                      setQuickAddName(e.name);
+                      setQuickPickerOpen(false);
+                    }}
+                  >
+                    {e.name}
+                  </CommandItem>
+                ))}
+              </CommandList>
+            </Command>
+          </PopoverContent>
+        </Popover>
       </div>
+
+      {quickAddName && (
+        <div className="sticky top-0 z-20 flex flex-wrap items-center gap-2 rounded-md border border-violet-400 bg-violet-50 px-3 py-2 text-sm dark:bg-violet-950/30">
+          <UserPlus className="h-4 w-4 shrink-0 text-violet-600" />
+          <span>
+            Быстрая фиксация:{" "}
+            <strong className="text-violet-700 dark:text-violet-300">
+              {quickAddName}
+            </strong>
+            . Кликайте по ячейкам, чтобы закрепить (повторный клик по этой
+            фамилии — убрать).
+          </span>
+          {posts.some((p) => p.shiftHours === 24) && (
+            <div className="flex items-center gap-1">
+              <span className="text-xs text-muted-foreground">Сутки:</span>
+              {KIND_LABELS.map(({ key, label }) => (
+                <Button
+                  key={key}
+                  size="sm"
+                  variant={quickAddKind === key ? "default" : "outline"}
+                  className="h-7 px-2 text-xs"
+                  onClick={() => setQuickAddKind(key)}
+                >
+                  {label}
+                </Button>
+              ))}
+            </div>
+          )}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="ml-auto h-7 px-2"
+            onClick={() => setQuickAddName("")}
+            title="Выключить быструю фиксацию"
+          >
+            <X className="mr-1 h-3.5 w-3.5" />
+            Выйти
+          </Button>
+        </div>
+      )}
 
       <div className="overflow-x-auto">
         <table className="w-full min-w-[800px] border-collapse text-xs">
@@ -303,6 +409,57 @@ export function FixedSlotsEditor({
                     return (
                       <td key={p.id} className="border px-1 py-0.5">
                         <div className="flex min-h-[1.5rem] flex-wrap items-center gap-0.5">
+                          {quickAddName ? (
+                            <>
+                              {people.map((person, idx) => {
+                                const bn = person.replace(/\([сдн]\)$/, "");
+                                const isTarget = bn === quickAddName;
+                                return (
+                                  <button
+                                    key={idx}
+                                    type="button"
+                                    disabled={!isTarget}
+                                    onClick={
+                                      isTarget
+                                        ? () =>
+                                            quickRemoveFixed(d, p.id, person)
+                                        : undefined
+                                    }
+                                    className={cn(
+                                      "inline-flex items-center gap-0.5 rounded border px-1.5 py-0.5 text-xs",
+                                      isTarget
+                                        ? "cursor-pointer bg-violet-500/20 ring-2 ring-violet-500"
+                                        : cn("opacity-50", FIXED_CLASS),
+                                    )}
+                                    title={isTarget ? "Убрать фикс" : person}
+                                  >
+                                    🔒 {person}
+                                  </button>
+                                );
+                              })}
+                              {eligible.some((e) => e.name === quickAddName) &&
+                                !assigned.has(quickAddName) && (
+                                  <button
+                                    type="button"
+                                    onClick={() =>
+                                      quickAssignFixed(d, p.id, p.shiftHours)
+                                    }
+                                    className="inline-flex items-center gap-0.5 rounded border border-violet-500 bg-violet-500/10 px-1.5 py-0.5 text-xs text-violet-700 transition-colors hover:bg-violet-500/20 dark:text-violet-300"
+                                    title={`Закрепить ${quickAddName}${
+                                      p.shiftHours === 24
+                                        ? ` (${KIND_SHORT[quickAddKind]})`
+                                        : ""
+                                    }`}
+                                  >
+                                    <Plus className="h-3 w-3" />
+                                    {p.shiftHours === 24
+                                      ? KIND_SHORT[quickAddKind]
+                                      : ""}
+                                  </button>
+                                )}
+                            </>
+                          ) : (
+                            <>
                           {people.map((person, idx) => (
                             <Popover key={idx}>
                               <PopoverTrigger
@@ -477,6 +634,8 @@ export function FixedSlotsEditor({
                                 )}
                               </PopoverContent>
                             </Popover>
+                          )}
+                            </>
                           )}
                         </div>
                       </td>
