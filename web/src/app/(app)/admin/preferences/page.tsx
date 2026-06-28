@@ -20,11 +20,6 @@ const MEDICAL_LABEL: Record<string, string> = {
   day_only: "только день",
 };
 
-const LOAD_LABEL: Record<string, string> = {
-  less: "хочет меньше",
-  more: "хочет больше",
-};
-
 export default async function AdminPreferencesPage() {
   const planning = await getPlanningMonth();
 
@@ -101,8 +96,6 @@ export default async function AdminPreferencesPage() {
                 <th className="py-1.5 pr-3">Желает</th>
                 <th className="py-1.5 pr-3">Очерёдность</th>
                 <th className="py-1.5 pr-3">Мед.</th>
-                <th className="py-1.5 pr-3">Нагрузка</th>
-                <th className="py-1.5 pr-3">Мин. смен</th>
               </tr>
             </thead>
             <tbody>
@@ -115,7 +108,6 @@ export default async function AdminPreferencesPage() {
                   e.medicalRestriction && e.medicalRestriction !== "none"
                     ? MEDICAL_LABEL[e.medicalRestriction] ?? e.medicalRestriction
                     : "";
-                const load = p?.loadPref ? LOAD_LABEL[p.loadPref] ?? "" : "";
                 return (
                   <tr key={e.id} className="border-b last:border-0">
                     <td className="py-1.5 pr-3 font-medium">{e.name}</td>
@@ -135,10 +127,6 @@ export default async function AdminPreferencesPage() {
                         : ""}
                     </td>
                     <td className="py-1.5 pr-3 text-xs text-amber-500">{med}</td>
-                    <td className="py-1.5 pr-3 text-xs">{load}</td>
-                    <td className="py-1.5 pr-3 tabular-nums text-xs">
-                      {p?.minShifts ? `≥ ${p.minShifts}` : ""}
-                    </td>
                   </tr>
                 );
               })}

@@ -58,7 +58,6 @@ export default async function AdminAffinityPage() {
       careerStartYear: true,
       allowedPosts: true,
       modalities: true,
-      can24h: true,
       postPreferences: true,
       postShiftPrefs: true,
       consecutivePref: true,
@@ -84,7 +83,6 @@ export default async function AdminAffinityPage() {
     careerStartYear: e.careerStartYear,
     allowedPosts: safeJson<string[]>(e.allowedPosts, []),
     modalities: safeJson<string[]>(e.modalities, []),
-    can24h: e.can24h ?? false,
     postPreferences: safeJson<Record<string, string>>(e.postPreferences, {}),
     postShiftPrefs: safeJson<Record<string, Record<string, string>>>(
       e.postShiftPrefs,
@@ -134,11 +132,11 @@ export default async function AdminAffinityPage() {
         <h1 className="text-2xl font-semibold">Матрица аппаратов</h1>
         <p className="text-sm text-muted-foreground">
           Единый вид «кто на чём работает». Строки — сотрудники, столбцы —
-          аппараты. В ячейке — отношение к допущенному аппарату (5 уровней); на
+          аппараты. В ячейке — отношение к аппарату (5 уровней); на
           суточных постах отдельно сутки / день / ночь. «Вообще не ставить» —
           жёсткий запрет: солвер не поставит (кроме ручного фикса). Пустая
-          ячейка «—» означает, что сотрудник не допущен к аппарату; допуск
-          меняется в карточке сотрудника.
+          ячейка «—» означает, что сотрудник не работает в этой модальности;
+          модальности задаются в карточке сотрудника (карандаш у фамилии).
         </p>
       </div>
       <AffinityMatrix

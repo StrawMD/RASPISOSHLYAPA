@@ -67,8 +67,6 @@ class Employee:
     consecutive_pref: str = "avoid"
     # Жёсткое мед/правовое ограничение: none | no_night | no_24h | day_only
     medical_restriction: str = "none"
-    # Допуск на суточные (24ч) смены. False → суточные (с) и ночные (н) запрещены.
-    can_24h: bool = True
     # Личные лимиты за месяц (None = без лимита)
     max_nights: int | None = None
     max_full: int | None = None

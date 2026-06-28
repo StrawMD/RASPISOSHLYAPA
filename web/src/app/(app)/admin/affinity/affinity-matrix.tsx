@@ -58,7 +58,6 @@ type InputEmployee = {
   careerStartYear: number | null;
   allowedPosts: string[];
   modalities: string[];
-  can24h: boolean;
   postPreferences: Record<string, string>;
   postShiftPrefs: Record<string, Record<string, string>>;
   consecutivePref: string;
@@ -77,7 +76,6 @@ type Profile = {
   hospitalStartYear: number | null;
   careerStartYear: number | null;
   modalities: string[];
-  can24h: boolean;
   consecutivePref: string;
   medicalRestriction: string;
   medicalNote: string | null;
@@ -103,7 +101,7 @@ type LevelMeta = {
 };
 
 // Шкала: «активные/желаемые» аппараты выделяются (зелёным), а отказ/запрет/
-// «не допущен» приглушены и уходят из поля зрения.
+// «вне модальности» приглушены и уходят из поля зрения.
 const LEVEL_META: Record<string, LevelMeta> = {
   prefer_strong: {
     label: "Очень хочу",
@@ -154,6 +152,17 @@ const LEVEL_ORDER = [
   "avoid",
   "avoid_hard",
 ] as const;
+
+const CONSECUTIVE_OPTIONS = [
+  { value: "avoid", label: "Не ставить смены подряд" },
+  { value: "neutral", label: "Без разницы" },
+  { value: "prefer_2", label: "Предпочитает 2 смены подряд" },
+  { value: "prefer_3", label: "Предпочитает 3 смены подряд" },
+  { value: "prefer_4", label: "Предпочитает 4 смены подряд" },
+] as const;
+function consecLabel(v: string) {
+  return CONSECUTIVE_OPTIONS.find((o) => o.value === v)?.label ?? v;
+}
 
 const SHIFT_KINDS: { key: Kind; label: string }[] = [
   { key: "full", label: "сутки" },
@@ -344,7 +353,6 @@ export function AffinityMatrix({
           hospitalStartYear: e.hospitalStartYear,
           careerStartYear: e.careerStartYear,
           modalities: e.modalities,
-          can24h: e.can24h,
           consecutivePref: e.consecutivePref,
           medicalRestriction: e.medicalRestriction,
           medicalNote: e.medicalNote,
@@ -724,15 +732,15 @@ export function AffinityMatrix({
                 {posts.map((p) => {
                   const allowed = !!r.allowed[p.id];
 
-                  // Не допущен к посту (модальность/допуск) — пустая
-                  // приглушённая ячейка без селекта. Допуск задаётся в
-                  // карточке сотрудника, а не здесь.
+                  // Сотрудник не работает в модальности этого аппарата —
+                  // пустая приглушённая ячейка без селекта. Модальности
+                  // задаются в карточке сотрудника (карандаш у фамилии).
                   if (!allowed) {
                     return (
                       <td
                         key={p.id}
                         className="border-b border-r bg-muted/20 px-1 py-1 align-middle"
-                        title="Не допущен к этому аппарату"
+                        title="Не работает в этой модальности"
                       >
                         <div className="flex h-7 items-center justify-center text-muted-foreground/30">
                           —
@@ -828,9 +836,9 @@ function EmployeeEditDialog({
   const [targetRate, setTargetRate] = useState(profile.targetRate);
   const [maxRate, setMaxRate] = useState(profile.maxRate);
   const [modalities, setModalities] = useState<string[]>(profile.modalities);
-  const [can24h, setCan24h] = useState(profile.can24h);
   const [medical, setMedical] = useState(profile.medicalRestriction);
   const [medicalNote, setMedicalNote] = useState(profile.medicalNote ?? "");
+  const [consec, setConsec] = useState(profile.consecutivePref || "avoid");
   const [dows, setDows] = useState<Set<number>>(
     new Set(profile.recurringUnavailableDows),
   );
@@ -867,13 +875,9 @@ function EmployeeEditDialog({
   }
 
   function toggleModality(mod: string) {
-    setModalities((prev) => {
-      const next = prev.includes(mod)
-        ? prev.filter((m) => m !== mod)
-        : [...prev, mod];
-      if (mod === "КТ" && !next.includes("КТ")) setCan24h(false);
-      return next;
-    });
+    setModalities((prev) =>
+      prev.includes(mod) ? prev.filter((m) => m !== mod) : [...prev, mod],
+    );
   }
 
   function toggleDow(idx: number) {
@@ -926,8 +930,7 @@ function EmployeeEditDialog({
           careerStartYear: parseYear(careerYear),
           allowedPosts,
           modalities,
-          can24h,
-          consecutivePref: profile.consecutivePref,
+          consecutivePref: consec,
           medicalRestriction: medical,
           medicalNote: medicalNote.trim() || null,
           recurringUnavailableDows: dowsArr,
@@ -948,8 +951,7 @@ function EmployeeEditDialog({
           hospitalStartYear: parseYear(hospitalYear),
           careerStartYear: parseYear(careerYear),
           modalities,
-          can24h,
-          consecutivePref: profile.consecutivePref,
+          consecutivePref: consec,
           medicalRestriction: medical,
           medicalNote: medicalNote.trim() || null,
           recurringUnavailableDows: dowsArr,
@@ -1051,16 +1053,11 @@ function EmployeeEditDialog({
                   {mod}
                 </label>
               ))}
-              {modalities.includes("КТ") && (
-                <label className="ml-2 flex items-center gap-2 border-l pl-4 text-sm">
-                  <Checkbox
-                    checked={can24h}
-                    onCheckedChange={(c) => setCan24h(!!c)}
-                  />
-                  Суточные КТ
-                </label>
-              )}
             </div>
+            <p className="text-[11px] text-muted-foreground">
+              Допуск к суткам/ночам на суточных постах задаётся в матрице
+              уровнем «Вообще не ставить» для смен «сутки»/«ночь».
+            </p>
           </div>
 
           <div className="space-y-1.5">
@@ -1089,6 +1086,26 @@ function EmployeeEditDialog({
                 onChange={(e) => setMedicalNote(e.target.value)}
               />
             )}
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Очерёдность смен</Label>
+            <Select value={consec} onValueChange={(v) => v && setConsec(v)}>
+              <SelectTrigger>
+                <SelectValue>{consecLabel(consec)}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {CONSECUTIVE_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] text-muted-foreground">
+              Тот же параметр, что сотрудник видит в своей анкете — источник
+              данных общий.
+            </p>
           </div>
 
           <div className="space-y-1.5">

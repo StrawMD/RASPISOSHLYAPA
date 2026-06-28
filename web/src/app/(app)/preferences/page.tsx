@@ -115,7 +115,6 @@ export default async function PreferencesPage() {
           targetRate: employee.targetRate,
           maxRate: employee.maxRate,
           modalities,
-          can24h: employee.can24h,
           hospitalStartYear: employee.hospitalStartYear,
           careerStartYear: employee.careerStartYear,
           consecutivePref: employee.consecutivePref,

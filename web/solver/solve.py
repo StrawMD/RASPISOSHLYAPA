@@ -50,7 +50,6 @@ def main():
             seniority_score=e.get("seniorityScore", 0),
             consecutive_pref=e.get("consecutivePref", "avoid") or "avoid",
             medical_restriction=e.get("medicalRestriction", "none") or "none",
-            can_24h=bool(e.get("can24h", True)),
             max_nights=e.get("maxNights"),
             max_full=e.get("maxFull"),
             min_shifts=e.get("minShifts"),

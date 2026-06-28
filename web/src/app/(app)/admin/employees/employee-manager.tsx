@@ -3,7 +3,6 @@
 import { useState, type ReactNode } from "react";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -23,13 +22,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import {
-  RATE_OPTIONS,
-  maxRateCap,
-  clampRates,
-  isPartTime,
-  maxRecurringDows,
-} from "@/lib/rates";
+import { RATE_OPTIONS, clampRates } from "@/lib/rates";
 import {
   Plus,
   Trash2,
@@ -44,13 +37,6 @@ import { useRouter } from "next/navigation";
 import { computeTenure, yearsWord } from "@/lib/seniority";
 
 const MODALITIES = ["КТ", "МРТ"] as const;
-const PREF_LEVELS = [
-  { value: "prefer_strong", label: "Очень хочу", color: "text-green-500" },
-  { value: "prefer", label: "Скорее хочу", color: "text-green-400" },
-  { value: "neutral", label: "Нейтрально", color: "text-muted-foreground" },
-  { value: "avoid", label: "Лучше не ставить", color: "text-amber-400" },
-  { value: "avoid_hard", label: "Вообще не ставить", color: "text-red-500" },
-] as const;
 
 const CONSECUTIVE_OPTIONS = [
   { value: "avoid", label: "Не ставить смены подряд" },
@@ -66,13 +52,6 @@ const MEDICAL_OPTIONS = [
   { value: "no_24h", label: "Без суточных (с)" },
   { value: "day_only", label: "Только дневные" },
 ] as const;
-
-const DOW_LABELS = ["Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс"] as const;
-
-function prefLabel(v: string) {
-  const pl = PREF_LEVELS.find((o) => o.value === v);
-  return <span className={pl?.color ?? ""}>{pl?.label ?? v}</span>;
-}
 
 // Base UI отображает «сырое» value, если не передать функцию-ребёнка.
 function consecLabel(v: string) {
@@ -93,7 +72,6 @@ type Employee = {
   careerStartYear: number | null;
   allowedPosts: string[];
   modalities: string[];
-  can24h: boolean;
   postPreferences: Record<string, string>;
   consecutivePref: string;
   medicalRestriction: string;
@@ -115,11 +93,8 @@ export type PrefSummary = {
   targetRate: number;
   maxRate: number;
   modalities: string[];
-  can24h: boolean;
   medicalRestriction: string;
   submitted: boolean;
-  loadPref: string | null;
-  shiftTimeMode: string | null;
   consec: string;
   preferCount: number;
   avoidCount: number;
@@ -127,7 +102,6 @@ export type PrefSummary = {
   unavailableCount: number;
   softUnavailableCount: number;
   desiredCount: number;
-  minShifts: number | null;
   maxFull: number | null;
   maxNights: number | null;
   avoidWithCount: number;
@@ -141,19 +115,6 @@ interface Props {
   planningLabel: string;
   submittedCount: number;
 }
-
-const LOAD_LABELS: Record<string, string> = {
-  less: "Меньше",
-  normal: "Как обычно",
-  more: "Больше",
-};
-const SHIFT_MODE_LABELS: Record<string, string> = {
-  only_full: "Только сутки",
-  prefer_full: "Сутки",
-  neutral: "Нейтр.",
-  prefer_day: "День",
-  prefer_night: "Ночь",
-};
 
 export function EmployeeManager({
   initialEmployees,
@@ -183,11 +144,16 @@ export function EmployeeManager({
   }
 
   async function saveEmployee(emp: Employee) {
+    // Предпочтения по аппаратам — источник истины «Матрица аппаратов»; отсюда
+    // их НЕ отправляем, чтобы не затереть. Остальной профиль (медотвод, ставки,
+    // очерёдность, недоступность) сохраняется как есть.
+    const { postPreferences: _omitPrefs, ...rest } = emp;
+    void _omitPrefs;
     const res = await fetch("/api/admin/employees", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        ...emp,
+        ...rest,
         allowedPosts: computeAllowedPosts(emp),
       }),
     });
@@ -213,7 +179,6 @@ export function EmployeeManager({
         careerStartYear: null,
         allowedPosts: [],
         modalities: [],
-        can24h: false,
       }),
     });
     if (res.ok) {
@@ -246,40 +211,7 @@ export function EmployeeManager({
     const next = emp.modalities.includes(mod)
       ? emp.modalities.filter((m) => m !== mod)
       : [...emp.modalities, mod];
-    const updates: Partial<Employee> = { modalities: next };
-    if (mod === "КТ" && !next.includes("КТ")) {
-      updates.can24h = false;
-    }
-    updateLocal(empId, updates);
-  }
-
-  function setPostPref(empId: string, postId: string, level: string) {
-    const emp = employees.find((e) => e.id === empId);
-    if (!emp) return;
-    const next = { ...emp.postPreferences, [postId]: level };
-    if (level === "neutral") delete next[postId];
-    updateLocal(empId, { postPreferences: next });
-  }
-
-  function toggleRecurringDow(empId: string, dow: number) {
-    const emp = employees.find((e) => e.id === empId);
-    if (!emp) return;
-    const has = emp.recurringUnavailableDows.includes(dow);
-    if (!has) {
-      const limit = maxRecurringDows(emp.rate);
-      if (emp.recurringUnavailableDows.length >= limit) {
-        toast.error(
-          `Максимум ${limit} дн. ${
-            isPartTime(emp.rate) ? "(совместитель)" : "(основной сотрудник)"
-          } регулярной недоступности`,
-        );
-        return;
-      }
-    }
-    const next = has
-      ? emp.recurringUnavailableDows.filter((d) => d !== dow)
-      : [...emp.recurringUnavailableDows, dow].sort((a, b) => a - b);
-    updateLocal(empId, { recurringUnavailableDows: next });
+    updateLocal(empId, { modalities: next });
   }
 
   return (
@@ -329,7 +261,6 @@ export function EmployeeManager({
         <div className="space-y-2">
         {filtered.map((emp) => {
           const expanded = expandedId === emp.id;
-          const visiblePosts = getPostsForModalities(emp.modalities);
 
           return (
             <Card key={emp.id}>
@@ -356,11 +287,6 @@ export function EmployeeManager({
                       {m}
                     </Badge>
                   ))}
-                  {emp.can24h && (
-                    <Badge variant="secondary" className="text-[10px] shrink-0">
-                      24ч
-                    </Badge>
-                  )}
                   {emp.medicalRestriction !== "none" && (
                     <Badge
                       variant="destructive"
@@ -380,7 +306,7 @@ export function EmployeeManager({
               </div>
               {expanded && (
                 <CardContent className="space-y-4 pt-0">
-                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                  <div className="grid gap-4 sm:grid-cols-2">
                     <div className="space-y-1.5">
                       <Label>Имя</Label>
                       <Input
@@ -418,45 +344,6 @@ export function EmployeeManager({
                         </SelectContent>
                       </Select>
                     </div>
-                    <div className="space-y-1.5">
-                      <Label>Целевая ставка</Label>
-                      <Input
-                        type="number"
-                        step={isPartTime(emp.rate) ? 0.05 : 0.25}
-                        min={emp.rate}
-                        max={emp.maxRate}
-                        value={emp.targetRate}
-                        onChange={(e) => {
-                          const raw = parseFloat(e.target.value);
-                          if (Number.isNaN(raw)) return;
-                          updateLocal(
-                            emp.id,
-                            clampRates(emp.rate, raw, emp.maxRate),
-                          );
-                        }}
-                      />
-                      <p className="text-[11px] text-muted-foreground">
-                        Желаемая загрузка (в ставках) — между ставкой и макс.
-                      </p>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Макс. ставки (потолок)</Label>
-                      <Input
-                        type="number"
-                        step={isPartTime(emp.rate) ? 0.05 : 0.25}
-                        min={emp.rate}
-                        max={maxRateCap(emp.rate)}
-                        value={emp.maxRate}
-                        onChange={(e) => {
-                          const raw = parseFloat(e.target.value);
-                          if (Number.isNaN(raw)) return;
-                          updateLocal(
-                            emp.id,
-                            clampRates(emp.rate, emp.targetRate, raw),
-                          );
-                        }}
-                      />
-                    </div>
                   </div>
 
                   <TenureFields
@@ -479,180 +366,30 @@ export function EmployeeManager({
                           {mod}
                         </label>
                       ))}
-                      {emp.modalities.includes("КТ") && (
-                        <label className="flex items-center gap-2 text-sm ml-4 border-l pl-4">
-                          <Checkbox
-                            checked={emp.can24h}
-                            onCheckedChange={(c) =>
-                              updateLocal(emp.id, { can24h: !!c })
-                            }
-                          />
-                          Суточные КТ
-                        </label>
-                      )}
                     </div>
                   </div>
-
-                  <div className="grid gap-4 sm:grid-cols-2">
-                    <div className="space-y-1.5">
-                      <Label>Мед/правовое ограничение</Label>
-                      <Select
-                        value={emp.medicalRestriction}
-                        onValueChange={(v) =>
-                          v &&
-                          updateLocal(emp.id, { medicalRestriction: v })
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue>{medicalLabel}</SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                          {MEDICAL_OPTIONS.map((o) => (
-                            <SelectItem key={o.value} value={o.value}>
-                              {o.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <p className="text-[11px] text-muted-foreground">
-                        Жёсткое ограничение: солвер никогда не нарушит.
-                      </p>
-                    </div>
-                    <div className="space-y-1.5">
-                      <Label>Очерёдность смен (по умолчанию)</Label>
-                      <Select
-                        value={emp.consecutivePref}
-                        onValueChange={(v) =>
-                          v && updateLocal(emp.id, { consecutivePref: v })
-                        }
-                      >
-                        <SelectTrigger>
-                          <SelectValue>{consecLabel}</SelectValue>
-                        </SelectTrigger>
-                        <SelectContent>
-                          {CONSECUTIVE_OPTIONS.map((o) => (
-                            <SelectItem key={o.value} value={o.value}>
-                              {o.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <p className="text-[11px] text-muted-foreground">
-                        Можно переопределить в предпочтениях на конкретный месяц.
-                      </p>
-                    </div>
-                  </div>
-
-                  {emp.medicalRestriction !== "none" && (
-                    <div className="space-y-1.5">
-                      <Label>Комментарий к ограничению (необязательно)</Label>
-                      <Textarea
-                        rows={2}
-                        placeholder="напр. справка до 01.09, беременность и т.п."
-                        value={emp.medicalNote ?? ""}
-                        onChange={(e) =>
-                          updateLocal(emp.id, {
-                            medicalNote: e.target.value || null,
-                          })
-                        }
-                      />
-                    </div>
-                  )}
-
-                  <div>
-                    <Label className="mb-2 block">
-                      Регулярно недоступен по дням недели
-                    </Label>
-                    <div className="flex gap-1.5 flex-wrap">
-                      {DOW_LABELS.map((lbl, idx) => {
-                        const active =
-                          emp.recurringUnavailableDows.includes(idx);
-                        return (
-                          <button
-                            key={idx}
-                            type="button"
-                            onClick={() => toggleRecurringDow(emp.id, idx)}
-                            className={`h-8 w-10 rounded border text-xs transition-colors ${
-                              active
-                                ? "bg-red-500 text-white border-red-500"
-                                : "bg-background hover:bg-muted"
-                            }`}
-                          >
-                            {lbl}
-                          </button>
-                        );
-                      })}
-                    </div>
-                    <p className="text-[11px] text-muted-foreground mt-1">
-                      Жёсткая недоступность каждую неделю (напр. учебный день).
-                    </p>
-                  </div>
-
-                  {visiblePosts.length > 0 && (
-                    <div>
-                      <Label className="mb-2 block">
-                        Предпочтения по аппаратам (постоянные)
-                      </Label>
-                      <p className="text-[11px] text-muted-foreground mb-2">
-                        Это постоянный дефолт сотрудника. Солвер использует его
-                        только если на конкретный месяц нет анкеты. Реальные
-                        месячные пожелания смотрите во вкладке «Сводка
-                        пожеланий».
-                      </p>
-                      <div className="space-y-1">
-                        {visiblePosts.map((post) => {
-                          const level =
-                            emp.postPreferences[post.id] ?? "neutral";
-                          return (
-                            <div
-                              key={post.id}
-                              className="flex items-center gap-3 rounded border px-3 py-1.5 text-sm"
-                            >
-                              <span className="flex-1">{post.name}</span>
-                              <Badge
-                                variant="outline"
-                                className="text-[10px] shrink-0"
-                              >
-                                {post.shiftHours}ч
-                              </Badge>
-                              <Select
-                                value={level}
-                                onValueChange={(v) =>
-                                  v && setPostPref(emp.id, post.id, v)
-                                }
-                              >
-                                <SelectTrigger className="w-36 h-7 text-xs">
-                                  <SelectValue>{prefLabel}</SelectValue>
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {PREF_LEVELS.map((pl) => (
-                                    <SelectItem key={pl.value} value={pl.value}>
-                                      <span className={pl.color}>
-                                        {pl.label}
-                                      </span>
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
 
                   <div className="rounded border border-dashed p-3">
-                    <p className="text-xs text-muted-foreground mb-2">
-                      Реальные пожелания сотрудника (аппараты, недоступные/
-                      желаемые дни, нагрузка, лимиты) задаются помесячно. Их можно
-                      посмотреть и изменить за сотрудника в полном редакторе анкеты.
+                    <p className="text-xs text-muted-foreground">
+                      Целевая/макс. ставка, аппараты и посменные предпочтения,
+                      медотвод и регулярная недоступность теперь задаются в{" "}
+                      <a
+                        href="/admin/affinity"
+                        className="underline font-medium"
+                      >
+                        Матрице аппаратов
+                      </a>{" "}
+                      (карандаш у фамилии) — это единый источник истины. Месячные
+                      пожелания сотрудника смотрите во вкладке «Сводка пожеланий»
+                      или в{" "}
+                      <a
+                        href={`/admin/employees/${emp.id}/preferences`}
+                        className="underline font-medium"
+                      >
+                        анкете на {planningLabel}
+                      </a>
+                      .
                     </p>
-                    <a
-                      href={`/admin/employees/${emp.id}/preferences`}
-                      className={buttonVariants({ size: "sm", variant: "outline" })}
-                    >
-                      Анкета на {planningLabel} →
-                    </a>
                   </div>
 
                   <div className="flex items-center gap-2 pt-2">
@@ -791,8 +528,6 @@ type OverviewColumn = {
   render: (r: PrefSummary) => ReactNode;
 };
 
-const LOAD_ORDER: Record<string, number> = { less: 0, normal: 1, more: 2 };
-
 function numCell(n: number | null, zeroDim = true) {
   if (n == null) return <span className="text-muted-foreground">—</span>;
   if (n === 0 && zeroDim)
@@ -834,33 +569,6 @@ const OVERVIEW_COLUMNS: OverviewColumn[] = [
     align: "center",
     sortValue: (r) => r.modalities.join(","),
     render: (r) => r.modalities.join(", ") || "—",
-  },
-  {
-    key: "can24h",
-    label: "24ч",
-    align: "center",
-    sortValue: (r) => (r.can24h ? 1 : 0),
-    render: (r) => (r.can24h ? "✓" : "—"),
-  },
-  {
-    key: "loadPref",
-    label: "Нагрузка",
-    title: "Желаемая нагрузка на месяц",
-    align: "center",
-    sortValue: (r) => (r.loadPref ? LOAD_ORDER[r.loadPref] ?? 1 : -1),
-    render: (r) =>
-      r.loadPref ? LOAD_LABELS[r.loadPref] ?? r.loadPref : "—",
-  },
-  {
-    key: "shiftTimeMode",
-    label: "Смены",
-    title: "Предпочтение по времени смен",
-    align: "center",
-    sortValue: (r) => r.shiftTimeMode ?? "",
-    render: (r) =>
-      r.shiftTimeMode
-        ? SHIFT_MODE_LABELS[r.shiftTimeMode] ?? r.shiftTimeMode
-        : "—",
   },
   {
     key: "consec",
@@ -932,13 +640,6 @@ const OVERVIEW_COLUMNS: OverviewColumn[] = [
     align: "center",
     sortValue: (r) => r.desiredCount,
     render: (r) => numCell(r.desiredCount),
-  },
-  {
-    key: "minShifts",
-    label: "Мин. смен",
-    align: "center",
-    sortValue: (r) => r.minShifts ?? -1,
-    render: (r) => numCell(r.minShifts, false),
   },
   {
     key: "maxFull",

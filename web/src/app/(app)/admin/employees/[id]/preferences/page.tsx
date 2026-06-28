@@ -127,7 +127,6 @@ export default async function AdminEmployeePreferencesPage({
           maxRate: employee.maxRate,
           seniority: employee.seniority,
           modalities,
-          can24h: employee.can24h,
           hospitalStartYear: employee.hospitalStartYear,
           careerStartYear: employee.careerStartYear,
           consecutivePref: employee.consecutivePref,

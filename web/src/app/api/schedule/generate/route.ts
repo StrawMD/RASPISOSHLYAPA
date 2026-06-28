@@ -35,6 +35,9 @@ export async function POST(req: NextRequest) {
 
   const posts = await prisma.post.findMany({ orderBy: { sortOrder: "asc" } });
   const employees = await prisma.employee.findMany();
+  // Суточные посты (24ч). Допуск к суткам/ночам определяется матрицей
+  // (allowedPosts + посменные запреты), отдельного флага can24h больше нет.
+  const posts24Ids = new Set(posts.filter((p) => p.shiftHours === 24).map((p) => p.id));
 
   let monthRecord = await prisma.month.findUnique({
     where: { year_month: { year, month } },
@@ -182,8 +185,6 @@ export async function POST(req: NextRequest) {
   const postPreferences: Record<string, Record<string, string>> = {};
   const postShiftPrefs: Record<string, Record<string, Record<string, string>>> = {};
   const dowShiftAvoid: Record<string, Record<string, Record<string, boolean>>> = {};
-  const shiftPreferences: Record<string, Record<string, boolean | null>> = {};
-  const shiftTimeModes: Record<string, string> = {};
   const weekdayPrefs: Record<string, string> = {};
   const weekendPrefs: Record<string, string> = {};
   const dowPrefs: Record<string, Record<string, string>> = {};
@@ -192,33 +193,10 @@ export async function POST(req: NextRequest) {
   const avoidWith: Record<string, string[]> = {};
   const preferWith: Record<string, string[]> = {};
   // Месячные переопределения (имя сотрудника → значение).
-  const consecutiveOverride: Record<string, string> = {};
-  const loadPrefByName: Record<string, string> = {};
   const maxNightsByName: Record<string, number> = {};
   const maxFullByName: Record<string, number> = {};
-  const minShiftsByName: Record<string, number> = {};
   const avoidSamePostByName: Record<string, boolean> = {};
   const preferSamePostByName: Record<string, boolean> = {};
-
-  function deriveLegacyShiftTimeMode(
-    full: string | null,
-    day: string | null,
-    night: string | null,
-  ): string {
-    if (full === "prefer" && day === "avoid" && night === "avoid")
-      return "only_full";
-    if (full === "prefer") return "prefer_full";
-    if (day === "prefer") return "prefer_day";
-    return "neutral";
-  }
-
-  const VALID_MODES = new Set([
-    "only_full",
-    "prefer_full",
-    "neutral",
-    "prefer_day",
-    "prefer_night",
-  ]);
 
   for (const pref of preferences) {
     const emp = employees.find((e) => e.id === pref.employeeId);
@@ -229,26 +207,8 @@ export async function POST(req: NextRequest) {
     // (см. ниже общий проход по сотрудникам). Здесь обрабатываем только
     // помесячные пожелания, не относящиеся к аппаратам.
 
-    shiftPreferences[emp.name] = {
-      pref_24h_full:
-        pref.pref24hFull === "prefer" ? true : pref.pref24hFull === "avoid" ? false : null,
-      pref_24h_day:
-        pref.pref24hDay === "prefer" ? true : pref.pref24hDay === "avoid" ? false : null,
-      pref_24h_night:
-        pref.pref24hNight === "prefer" ? true : pref.pref24hNight === "avoid" ? false : null,
-    };
-
-    const mode =
-      pref.shiftTimeMode && VALID_MODES.has(pref.shiftTimeMode)
-        ? pref.shiftTimeMode
-        : deriveLegacyShiftTimeMode(
-            pref.pref24hFull,
-            pref.pref24hDay,
-            pref.pref24hNight,
-          );
-    if (mode && mode !== "neutral") {
-      shiftTimeModes[emp.name] = mode;
-    }
+    // Предпочтения по типам смен (сутки/день/ночь) ведёт админ в матрице
+    // (postShiftPrefs на Employee). Помесячный shiftTimeMode/pref24h убран.
 
     const dsaRaw = safeJson<Record<string, Record<string, boolean>>>(
       pref.dowShiftAvoid,
@@ -293,14 +253,8 @@ export async function POST(req: NextRequest) {
     const pw: string[] = safeJson(pref.preferWith, []);
     if (pw.length > 0) preferWith[emp.name] = pw;
 
-    if (pref.consecutivePrefOverride) {
-      consecutiveOverride[emp.name] = pref.consecutivePrefOverride;
-    }
-    if (pref.loadPref) loadPrefByName[emp.name] = pref.loadPref;
     if (typeof pref.maxNights === "number") maxNightsByName[emp.name] = pref.maxNights;
     if (typeof pref.maxFull === "number") maxFullByName[emp.name] = pref.maxFull;
-    if (typeof pref.minShifts === "number" && pref.minShifts > 0)
-      minShiftsByName[emp.name] = pref.minShifts;
     // Разнообразие аппаратов (3-позиция). Бэк-компат: avoidSamePost=true → variety.
     if (pref.postVarietyPref === "variety" || pref.avoidSamePost)
       avoidSamePostByName[emp.name] = true;
@@ -414,14 +368,7 @@ export async function POST(req: NextRequest) {
     // выходные) — чтобы не блокировать покрытие смен у того, чья рабочая норма
     // обнулилась отпуском, но кто всё ещё может выйти (напр. на выходной пост).
     const hasAvailableDay = absentSet.size < daysInMonth;
-    let boundedTarget = eff.targetRate;
-    // Желаемая нагрузка на месяц: мягко двигаем цель в пределах [rate, maxRate].
-    const load = loadPrefByName[emp.name];
-    if (load === "more") {
-      boundedTarget = Math.min(eff.maxRate, boundedTarget + 0.25);
-    } else if (load === "less") {
-      boundedTarget = Math.max(eff.rate, boundedTarget - 0.25);
-    }
+    const boundedTarget = eff.targetRate;
     const hardRate = Math.min(
       ABSOLUTE_MAX_RATE,
       eff.maxRate + EMERGENCY_BUFFER_RATE,
@@ -438,9 +385,7 @@ export async function POST(req: NextRequest) {
     if (isPartTime(eff.rate)) {
       fairRate = boundedTarget;
     } else {
-      let base = FAIR_RATE;
-      if (load === "more") base += 0.25;
-      else if (load === "less") base -= 0.25;
+      const base = FAIR_RATE;
       fairRate = Math.min(eff.maxRate, Math.max(eff.rate, base));
     }
     employeeFairHours[emp.name] = nh * fairRate * avail;
@@ -451,7 +396,9 @@ export async function POST(req: NextRequest) {
     // одной смены (24ч для суточников, иначе 12ч), пока есть хоть один доступный
     // день — иначе договорную ставку для него физически не закрыть.
     if (hasAvailableDay) {
-      const shiftUnit = emp.can24h ? 24 : 12;
+      const allowed = safeJson<string[]>(emp.allowedPosts, []);
+      const allows24 = allowed.some((p) => posts24Ids.has(p));
+      const shiftUnit = allows24 ? 24 : 12;
       if (employeeMaxHours[emp.name] < shiftUnit) employeeMaxHours[emp.name] = shiftUnit;
       if (employeeHardMaxHours[emp.name] < shiftUnit) employeeHardMaxHours[emp.name] = shiftUnit;
     }
@@ -522,8 +469,6 @@ export async function POST(req: NextRequest) {
     })),
     employees: employees.map((e) => {
       const t = computeTenure(e, year);
-      const effectiveConsecutive =
-        consecutiveOverride[e.name] ?? e.consecutivePref ?? "avoid";
       const eff = effRates.get(e.name)!;
       return {
         name: e.name,
@@ -535,12 +480,10 @@ export async function POST(req: NextRequest) {
         hospitalYears: t.hospitalYears,
         careerYears: t.careerYears,
         seniorityScore: t.score,
-        consecutivePref: effectiveConsecutive,
+        consecutivePref: e.consecutivePref ?? "avoid",
         medicalRestriction: e.medicalRestriction ?? "none",
-        can24h: e.can24h,
         maxNights: maxNightsByName[e.name] ?? null,
         maxFull: maxFullByName[e.name] ?? null,
-        minShifts: minShiftsByName[e.name] ?? null,
         avoidSamePost: avoidSamePostByName[e.name] ?? false,
         preferSamePost: preferSamePostByName[e.name] ?? false,
       };
@@ -562,8 +505,6 @@ export async function POST(req: NextRequest) {
     postPreferences,
     postShiftPrefs,
     dowShiftAvoid,
-    shiftPreferences,
-    shiftTimeModes,
     seniorityFilter: seniorityFilter ?? false,
     timeLimit: effectiveTimeLimit,
     nightShareCapPercent,

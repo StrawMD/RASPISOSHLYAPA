@@ -28,7 +28,6 @@ export interface SolverInput {
     seniorityScore: number;
     consecutivePref?: string;
     medicalRestriction?: string;
-    can24h?: boolean;
     maxNights?: number | null;
     maxFull?: number | null;
     minShifts?: number | null;

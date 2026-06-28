@@ -3,7 +3,7 @@ import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db";
 
 // Массовое сохранение affinity-матрицы (только админ/составитель):
-//   • allowedPosts / can24h — жёсткие допуски;
+//   • allowedPosts — жёсткие допуски (выводятся из модальностей);
 //   • postPreferences — 5-уровневые предпочтения по 12ч-постам (и суточным как пост);
 //   • postShiftPrefs — посменные (с/д/н) предпочтения на суточных постах.
 // modalities выводятся из allowedPosts (как в ops-скрипте employee.cjs).

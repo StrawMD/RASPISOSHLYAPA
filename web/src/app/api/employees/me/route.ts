@@ -42,8 +42,6 @@ export async function PUT(req: NextRequest) {
     ? body.modalities.filter((m: unknown) => typeof m === "string" && ALLOWED_MODALITIES.has(m))
     : safeJson(current.modalities, []);
 
-  const canWork24h = modalities.includes("КТ") ? Boolean(body.can24h) : false;
-
   const posts = await prisma.post.findMany({ orderBy: { sortOrder: "asc" } });
   const modSet = new Set(modalities);
   const allowedPosts = posts
@@ -108,7 +106,6 @@ export async function PUT(req: NextRequest) {
       maxRate,
       modalities: JSON.stringify(modalities),
       allowedPosts: JSON.stringify(allowedPosts),
-      can24h: canWork24h,
       hospitalStartYear,
       careerStartYear,
       consecutivePref,
@@ -126,7 +123,6 @@ export async function PUT(req: NextRequest) {
     maxRate: updated.maxRate,
     modalities: safeJson(updated.modalities, []),
     allowedPosts: safeJson(updated.allowedPosts, []),
-    can24h: updated.can24h,
     hospitalStartYear: updated.hospitalStartYear,
     careerStartYear: updated.careerStartYear,
     consecutivePref: updated.consecutivePref,

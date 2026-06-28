@@ -80,29 +80,23 @@ const PREF_COLOR: Record<string, string> = {
   null: "text-muted-foreground",
 };
 
-type ShiftTimeMode =
-  | "only_full"
-  | "prefer_full"
-  | "neutral"
-  | "prefer_day"
-  | "prefer_night";
-
-function isShiftTimeMode(v: unknown): v is ShiftTimeMode {
-  return (
-    v === "only_full" ||
-    v === "prefer_full" ||
-    v === "neutral" ||
-    v === "prefer_day" ||
-    v === "prefer_night"
-  );
-}
-
 const MEDICAL_OPTIONS = [
   { value: "none", label: "Нет ограничений" },
   { value: "no_night", label: "Нельзя ночные смены" },
   { value: "no_24h", label: "Нельзя суточные (24ч)" },
   { value: "day_only", label: "Только дневные смены" },
 ] as const;
+
+const CONSECUTIVE_OPTIONS = [
+  { value: "avoid", label: "Не ставить смены подряд" },
+  { value: "neutral", label: "Без разницы" },
+  { value: "prefer_2", label: "Предпочитаю 2 смены подряд" },
+  { value: "prefer_3", label: "Предпочитаю 3 смены подряд" },
+  { value: "prefer_4", label: "Предпочитаю 4 смены подряд" },
+] as const;
+function consecLabel(v: string) {
+  return CONSECUTIVE_OPTIONS.find((o) => o.value === v)?.label ?? v;
+}
 
 const VARIETY_OPTIONS = [
   { value: "neutral", label: "Без разницы" },
@@ -131,23 +125,6 @@ function maxConsecutiveInSet(set: Set<number>): number {
     prev = d;
   }
   return max;
-}
-
-/**
- * Backward-compat: derive the aggregate mode from the legacy per-24h-post
- * flags (pref24hFull/Day/Night).  Used when the explicit `shiftTimeMode`
- * wasn't saved yet on an old preference record.
- */
-function deriveLegacyShiftTimeMode(
-  full: string | null,
-  day: string | null,
-  night: string | null,
-): ShiftTimeMode {
-  if (full === "prefer" && day === "avoid" && night === "avoid")
-    return "only_full";
-  if (full === "prefer") return "prefer_full";
-  if (day === "prefer") return "prefer_day";
-  return "neutral";
 }
 
 function prefLabel(v: string) {
@@ -180,7 +157,6 @@ interface Props {
     maxRate: number;
     seniority?: number;
     modalities: string[];
-    can24h: boolean;
     hospitalStartYear: number | null;
     careerStartYear: number | null;
     consecutivePref: string;
@@ -295,7 +271,6 @@ export function PreferencesForm({
   const [targetRate] = useState(initialTargetRate);
   const [maxRate] = useState(initialMaxRate);
   const [modalities] = useState<string[]>(employee.modalities);
-  const [can24h] = useState(employee.can24h);
   const [hospitalYearStr] = useState(() =>
     employee.hospitalStartYear != null ? String(employee.hospitalStartYear) : "",
   );
@@ -303,24 +278,6 @@ export function PreferencesForm({
     employee.careerStartYear != null ? String(employee.careerStartYear) : "",
   );
 
-  const initialShiftTimeMode: ShiftTimeMode = isShiftTimeMode(
-    existing?.shiftTimeMode,
-  )
-    ? (existing!.shiftTimeMode as ShiftTimeMode)
-    : deriveLegacyShiftTimeMode(
-        existing?.pref24hFull ?? null,
-        existing?.pref24hDay ?? null,
-        existing?.pref24hNight ?? null,
-      );
-  const [shiftTimeMode, setShiftTimeMode] =
-    useState<ShiftTimeMode>(initialShiftTimeMode);
-  const [postPrefs, setPostPrefs] = useState<Record<string, string>>(
-    existing?.postPreferences ?? {},
-  );
-  // Пожелания по типам смен на суточных постах: {postId: {full|day|night: lvl}}
-  const [postShiftPrefs, setPostShiftPrefs] = useState<
-    Record<string, Record<string, string>>
-  >(existing?.postShiftPrefs ?? {});
   const [unavailable, setUnavailable] = useState<Set<number>>(
     new Set(existing?.unavailableDays ?? []),
   );
@@ -332,9 +289,12 @@ export function PreferencesForm({
   );
   const [comment, setComment] = useState(existing?.comment ?? "");
 
-  // Профильные (стабильные) поля. Очерёдность смен из анкеты убрана —
-  // значение сохраняем как есть (правится администратором при необходимости).
-  const [consecutivePref] = useState(employee.consecutivePref || "avoid");
+  // Профильные (стабильные) поля. Эти настройки живут на сотруднике и
+  // переносятся из месяца в месяц автоматически (правит сам сотрудник в анкете
+  // или администратор в матрице — источник один и тот же).
+  const [consecutivePref, setConsecutivePref] = useState(
+    employee.consecutivePref || "avoid",
+  );
   const [medicalRestriction, setMedicalRestriction] = useState(
     employee.medicalRestriction || "none",
   );
@@ -406,8 +366,9 @@ export function PreferencesForm({
     return posts.filter((p) => p.modality && modSet.has(p.modality));
   }, [posts, modalities]);
 
+  // Допуск к суткам/ночам теперь не отдельный флаг — суточные смены показываем,
+  // если сотрудник работает в КТ и в системе есть суточные посты.
   const has24h =
-    can24h &&
     modalities.includes("КТ") &&
     has24hPostsInSystem &&
     visiblePosts.some((p) => p.shiftHours === 24);
@@ -568,13 +529,10 @@ export function PreferencesForm({
 
   function copyFromPrevious() {
     if (readOnly || !previous) return;
-    if (isShiftTimeMode(previous.shiftTimeMode)) {
-      setShiftTimeMode(previous.shiftTimeMode as ShiftTimeMode);
-    }
-    setPostPrefs(previous.postPreferences ?? {});
-    setPostShiftPrefs(previous.postShiftPrefs ?? {});
+    // Предпочтения по аппаратам/типам смен и «лучше не ставить» по датам НЕ
+    // копируем: аппараты ведёт админ в матрице, а мягкие даты заполняются заново
+    // каждый месяц.
     setDowPrefs(previous.dayOfWeekPrefs ?? {});
-    setSoftUnavailable(new Set(previous.softUnavailableDays ?? []));
     setMaxNightsStr(previous.maxNights != null ? String(previous.maxNights) : "");
     setMaxFullStr(previous.maxFull != null ? String(previous.maxFull) : "");
     setPostVarietyPref(
@@ -654,7 +612,6 @@ export function PreferencesForm({
               allowedPosts: (allPostsForAllowed ?? posts)
                 .filter((p) => p.modality && modalities.includes(p.modality))
                 .map((p) => p.id),
-              can24h,
               consecutivePref,
               medicalRestriction,
               medicalNote: medicalNote.trim() || null,
@@ -669,7 +626,6 @@ export function PreferencesForm({
               targetRate,
               maxRate,
               modalities,
-              can24h,
               hospitalStartYear: hospitalParsed,
               careerStartYear: careerParsed,
               consecutivePref,
@@ -698,24 +654,6 @@ export function PreferencesForm({
           return;
         }
 
-        const visibleIds = new Set(visiblePosts.map((p) => p.id));
-        const twentyFourIds = new Set(
-          visiblePosts.filter((p) => p.shiftHours === 24).map((p) => p.id),
-        );
-        // Обычные (12ч) посты идут в postPreferences; суточные — в postShiftPrefs.
-        const filteredPostPrefs: Record<string, string> = {};
-        for (const [pid, v] of Object.entries(postPrefs)) {
-          if (visibleIds.has(pid) && !twentyFourIds.has(pid)) {
-            filteredPostPrefs[pid] = v;
-          }
-        }
-        const filteredPostShiftPrefs: Record<string, Record<string, string>> = {};
-        for (const [pid, m] of Object.entries(postShiftPrefs)) {
-          if (twentyFourIds.has(pid) && Object.keys(m).length > 0) {
-            filteredPostShiftPrefs[pid] = m;
-          }
-        }
-
         const parseCap = (s: string): number | null => {
           const t = s.trim();
           if (!t) return null;
@@ -730,13 +668,14 @@ export function PreferencesForm({
             employeeId,
             year,
             month,
-            shiftTimeMode,
+            // Предпочтения по аппаратам/типам смен ведёт админ в матрице —
+            // сотрудник их больше не задаёт.
+            shiftTimeMode: null,
             pref24hFull: null,
             pref24hDay: null,
             pref24hNight: null,
-            postPreferences: filteredPostPrefs,
-            postShiftPrefs: filteredPostShiftPrefs,
-            // Удалённые из анкеты факторы: больше не задаются сотрудником.
+            postPreferences: {},
+            postShiftPrefs: {},
             dowShiftAvoid: {},
             unavailableDays:
               partTime && availabilityMode === "whitelist"
@@ -908,6 +847,31 @@ export function PreferencesForm({
               (можно не отмечать вручную каждый раз). Максимум{" "}
               {recurringDowLimit}{" "}
               {partTime ? "дн. (совместитель)" : "дн. (основной сотрудник)"}.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Очерёдность смен</Label>
+            <Select
+              value={consecutivePref}
+              onValueChange={(v) => v && setConsecutivePref(v)}
+              disabled={readOnly}
+            >
+              <SelectTrigger className="w-full sm:w-80">
+                <SelectValue>{consecLabel(consecutivePref)}</SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                {CONSECUTIVE_OPTIONS.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>
+                    {o.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-[11px] text-muted-foreground">
+              Хотите ли вы, чтобы смены шли подряд (несколько дней кряду) или
+              лучше вразброс. Сохраняется в профиле и переносится на следующие
+              месяцы.
             </p>
           </div>
         </CardContent>
