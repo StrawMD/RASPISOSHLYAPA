@@ -107,10 +107,18 @@ export async function POST(req: NextRequest) {
   }
 
   const absences: Record<string, number[]> = {};
+  // ОТПУСК (таблица Availability) — единственный источник, который УРЕЗАЕТ
+  // месячную цель по часам. Прочая недоступность (регулярные дни недели,
+  // «не могу» из анкеты, белый список) ограничивает РАССТАНОВКУ (жёстко в
+  // `absences`), но НЕ снижает норму: ставка 1.0 = полные часы, просто
+  // распределённые по доступным дням.
+  const vacationAbsences: Record<string, number[]> = {};
   for (const av of availabilities) {
     const emp = employees.find((e) => e.id === av.employeeId);
     if (emp) {
-      absences[emp.name] = safeJson(av.unavailableDays, []);
+      const days = safeJson<number[]>(av.unavailableDays, []);
+      absences[emp.name] = days;
+      vacationAbsences[emp.name] = days;
     }
   }
 
@@ -388,11 +396,15 @@ export async function POST(req: NextRequest) {
   for (const emp of employees) {
     const eff = effRates.get(emp.name)!;
     const absentSet = new Set(absences[emp.name] ?? []);
+    // Цель/потолки по часам режет ТОЛЬКО отпуск (vacationAbsences), а не вся
+    // недоступность — иначе у 1.0-ставочника с регулярными выходными цель
+    // занижалась бы, хотя он обязан отработать полную норму.
+    const vacationSet = new Set(vacationAbsences[emp.name] ?? []);
     const availWorkNorm = workNormHours(
       year,
       month,
       isHolidayDate,
-      (day) => !absentSet.has(day),
+      (day) => !vacationSet.has(day),
     );
     // Доля доступной рабочей нормы (с учётом праздников/предпраздничных).
     // Отсутствия только в выходные не снижают её — как и требует алгоритм.

@@ -47,10 +47,14 @@ export async function GET(req: NextRequest) {
     ignoreFixedSlots?: boolean;
   }>(version.solverParams, {});
 
-  let normHours = version.month.normHours ?? 0;
-  if (normHours <= 0 && typeof sp.normHours === "number" && sp.normHours > 0) {
-    normHours = sp.normHours;
-  }
+  // Источник истины нормы для ЧЕРНОВИКА — то, с чем его реально сгенерировали
+  // (solverParams.normHours): кастомное значение, заданное админом перед
+  // генерацией, либо рассчитанная норма месяца. Снимок month.normHours и
+  // повторный resolveMonthNorm — только запасной вариант для старых версий.
+  let normHours =
+    typeof sp.normHours === "number" && sp.normHours > 0
+      ? sp.normHours
+      : version.month.normHours ?? 0;
 
   const posts = await prisma.post.findMany({ orderBy: { sortOrder: "asc" } });
   const employees = await prisma.employee.findMany({ orderBy: { name: "asc" } });
@@ -72,36 +76,19 @@ export async function GET(req: NextRequest) {
     where: { monthId: version.month.id },
     include: { employee: { select: { name: true } } },
   });
-  const absentByName: Record<string, Set<number>> = {};
-  const addAbsent = (name: string, days: number[]) => {
-    const set = absentByName[name] ?? (absentByName[name] = new Set<number>());
-    for (const d of days) set.add(d);
-  };
+  // Отпуск (Availability) — единственный источник, который урезает цель/часы
+  // в сводке (как и в генерации). Регулярная недоступность по дням недели,
+  // «не могу» из анкеты и белый список ограничивают только расстановку, но
+  // НЕ снижают норму: ставка 1.0 = полные часы, распределённые по доступным дням.
+  const vacationByName: Record<string, Set<number>> = {};
   for (const av of availabilityRows) {
-    addAbsent(av.employee.name, safeJson<number[]>(av.unavailableDays, []));
+    const days = safeJson<number[]>(av.unavailableDays, []);
+    vacationByName[av.employee.name] = new Set(days);
   }
-  for (const pr of prefRows) {
-    addAbsent(pr.employee.name, safeJson<number[]>(pr.unavailableDays, []));
-    // Белый список (полставка): доступен только в указанные дни.
-    if (pr.availabilityMode === "whitelist") {
-      const avail = new Set(safeJson<number[]>(pr.availableDays, []));
-      const blocked: number[] = [];
-      for (let d = 1; d <= daysInMonth; d++) if (!avail.has(d)) blocked.push(d);
-      addAbsent(pr.employee.name, blocked);
-    }
-  }
-  for (const e of employees) {
-    const dows = safeJson<number[]>(e.recurringUnavailableDows, []);
-    if (dows.length === 0) continue;
-    const dowSet = new Set(dows);
-    for (let d = 1; d <= daysInMonth; d++) {
-      const dow = (new Date(version.month.year, version.month.month - 1, d).getDay() + 6) % 7;
-      if (dowSet.has(dow)) addAbsent(e.name, [d]);
-    }
-  }
+  // «Доступно дней» для сводки — по отпуску (то, что реально влияет на норму).
   const availableDaysByName: Record<string, number> = {};
   for (const e of employees) {
-    const absent = absentByName[e.name]?.size ?? 0;
+    const absent = vacationByName[e.name]?.size ?? 0;
     availableDaysByName[e.name] = Math.max(0, daysInMonth - absent);
   }
 
@@ -123,34 +110,37 @@ export async function GET(req: NextRequest) {
     isHolidayDate,
   );
 
-  // Источник истины для нормы месяца: override из Setting `monthNorms` или
-  // авто-расчёт по кадровой формуле. Сводка считается именно от него, а не от
-  // снимка month.normHours — снимок мог устареть (поменяли праздники/override
-  // уже после генерации), и тогда % в сводке были бы неверными.
-  const monthNormsRow = await prisma.setting.findUnique({
-    where: { key: "monthNorms" },
-  });
-  const normOverrides = safeJson<Record<string, number>>(
-    monthNormsRow?.value ?? "{}",
-    {},
-  );
-  const resolvedNorm = resolveMonthNorm(
-    version.month.year,
-    version.month.month,
-    isHolidayDate,
-    normOverrides,
-  );
-  if (resolvedNorm > 0) {
-    normHours = resolvedNorm;
+  // Запасной источник нормы (для старых версий без solverParams.normHours):
+  // override из Setting `monthNorms` или авто-расчёт по кадровой формуле.
+  // Если версия знает свою норму (sp.normHours) — её НЕ перетираем, чтобы в
+  // черновике часы считались от того, с чем он реально сгенерирован
+  // (в т.ч. от кастомной цели, заданной админом).
+  if (normHours <= 0) {
+    const monthNormsRow = await prisma.setting.findUnique({
+      where: { key: "monthNorms" },
+    });
+    const normOverrides = safeJson<Record<string, number>>(
+      monthNormsRow?.value ?? "{}",
+      {},
+    );
+    const resolvedNorm = resolveMonthNorm(
+      version.month.year,
+      version.month.month,
+      isHolidayDate,
+      normOverrides,
+    );
+    if (resolvedNorm > 0) {
+      normHours = resolvedNorm;
+    }
   }
   const availFactorByName: Record<string, number> = {};
   for (const e of employees) {
-    const absentSet = absentByName[e.name] ?? new Set<number>();
+    const vacationSet = vacationByName[e.name] ?? new Set<number>();
     const availWorkNorm = workNormHours(
       version.month.year,
       version.month.month,
       isHolidayDate,
-      (day) => !absentSet.has(day),
+      (day) => !vacationSet.has(day),
     );
     availFactorByName[e.name] =
       fullWorkNorm > 0

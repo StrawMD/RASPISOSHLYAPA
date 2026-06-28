@@ -12,7 +12,7 @@ import { PrismaClient } from "@prisma/client";
 import { runSolver, SolverInput } from "../src/lib/solver-bridge";
 import { computeTenure } from "../src/lib/seniority";
 import { validateFixedSlots } from "../src/lib/validate-fixed-slots";
-import { clampRates, workNormHours, isPartTime } from "../src/lib/rates";
+import { clampRates, workNormHours, isPartTime, resolveMonthNorm } from "../src/lib/rates";
 
 const prisma = new PrismaClient();
 
@@ -25,6 +25,11 @@ async function main() {
   const year = parseInt(process.argv[2] ?? "2026", 10);
   const month = parseInt(process.argv[3] ?? "8", 10);
   const relax = process.argv.includes("--relax");
+  const limitArg = process.argv.find((a) => a.startsWith("--limit="));
+  const timeLimit = limitArg ? parseInt(limitArg.split("=")[1], 10) : 120;
+  // Кастомная норма часов (как поле «Норма часов» в форме генерации).
+  const normArg = process.argv.find((a) => a.startsWith("--norm="));
+  const customNorm = normArg ? parseFloat(normArg.split("=")[1]) : null;
 
   const posts = await prisma.post.findMany({ orderBy: { sortOrder: "asc" } });
   const employees = await prisma.employee.findMany();
@@ -74,9 +79,15 @@ async function main() {
   }
 
   const absences: Record<string, number[]> = {};
+  // Отпуск (Availability) — единственный источник, урезающий норму часов.
+  const vacationAbsences: Record<string, number[]> = {};
   for (const av of availabilities) {
     const emp = employees.find((e) => e.id === av.employeeId);
-    if (emp) absences[emp.name] = safeJson(av.unavailableDays, []);
+    if (emp) {
+      const days = safeJson<number[]>(av.unavailableDays, []);
+      absences[emp.name] = days;
+      vacationAbsences[emp.name] = days;
+    }
   }
   for (const ec of empConfigs) {
     const emp = employees.find((e) => e.id === ec.employeeId);
@@ -230,7 +241,6 @@ async function main() {
   const employeeHardMaxHours: Record<string, number> = {};
   const employeeFloorHours: Record<string, number> = {};
   const employeeFairHours: Record<string, number> = {};
-  const nh = monthRecord.normHours;
   const FAIR_RATE = 1.25;
   const EMERGENCY_BUFFER_RATE = 0.5;
   const ABSOLUTE_MAX_RATE = 2.0;
@@ -245,10 +255,21 @@ async function main() {
   const isHolidayDate = (d: Date) => holidayDates.has(fmtDate(d));
   const fullWorkNorm = workNormHours(year, month, isHolidayDate);
 
+  // Норма часов — как в генерации: кастомная цель (если задана) → иначе
+  // override месяца (Setting monthNorms) → авто-расчёт по кадровой формуле.
+  const monthNormsRow = await prisma.setting.findUnique({ where: { key: "monthNorms" } });
+  const normOverrides = safeJson<Record<string, number>>(monthNormsRow?.value ?? "{}", {});
+  const nh =
+    customNorm != null && customNorm > 0
+      ? customNorm
+      : resolveMonthNorm(year, month, isHolidayDate, normOverrides);
+
   for (const emp of employees) {
     const eff = effRates.get(emp.name)!;
     const absentSet = new Set(absences[emp.name] ?? []);
-    const availWorkNorm = workNormHours(year, month, isHolidayDate, (day) => !absentSet.has(day));
+    // Цель/часы режет только отпуск; прочая недоступность — нет.
+    const vacationSet = new Set(vacationAbsences[emp.name] ?? []);
+    const availWorkNorm = workNormHours(year, month, isHolidayDate, (day) => !vacationSet.has(day));
     const avail = fullWorkNorm > 0 ? Math.max(0, Math.min(1, availWorkNorm / fullWorkNorm)) : 0;
     const hasAvailableDay = absentSet.size < daysInMonth;
     let boundedTarget = eff.targetRate;
@@ -315,7 +336,7 @@ async function main() {
       employeeFloorHours, employeeFairHours, fixedSlots: fixedSlotsForSolver,
     },
     postPreferences, postShiftPrefs, dowShiftAvoid, shiftPreferences, shiftTimeModes,
-    seniorityFilter: false, timeLimit: 120,
+    seniorityFilter: false, timeLimit,
     weekdayPrefs, weekendPrefs, dowPrefs, desiredDates, softUnavailableDays, avoidWith, preferWith,
     weights: Object.keys(solverWeights).length > 0 ? solverWeights : undefined,
     relax,
