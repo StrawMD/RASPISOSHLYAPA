@@ -425,11 +425,18 @@ export function AffinityMatrix({
         id: e.id,
         name: e.name,
         rate: e.rate,
-        allowed: Object.fromEntries(e.allowedPosts.map((p) => [p, true])),
+        // Допуски выводим из МОДАЛЬНОСТЕЙ (а не из сохранённого allowedPosts):
+        // КТ-врач видит все КТ-посты, включая суточные. Так настройки суток
+        // показываются всем КТ, а запрет на сутки — это avoid_hard в ячейке.
+        allowed: Object.fromEntries(
+          allPostsModality
+            .filter((p) => p.modality && e.modalities.includes(p.modality))
+            .map((p) => [p.id, true]),
+        ),
         postPrefs: { ...e.postPreferences },
         shiftPrefs: JSON.parse(JSON.stringify(e.postShiftPrefs ?? {})),
       })),
-    [employees],
+    [employees, allPostsModality],
   );
 
   // История для undo/redo.

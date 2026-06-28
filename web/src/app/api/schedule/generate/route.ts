@@ -36,8 +36,20 @@ export async function POST(req: NextRequest) {
   const posts = await prisma.post.findMany({ orderBy: { sortOrder: "asc" } });
   const employees = await prisma.employee.findMany();
   // Суточные посты (24ч). Допуск к суткам/ночам определяется матрицей
-  // (allowedPosts + посменные запреты), отдельного флага can24h больше нет.
+  // (модальности + посменные запреты), отдельного флага can24h больше нет.
   const posts24Ids = new Set(posts.filter((p) => p.shiftHours === 24).map((p) => p.id));
+
+  // Допущенные посты выводим из МОДАЛЬНОСТЕЙ сотрудника, а не из сохранённого
+  // allowedPosts: для КТ-врача доступны все КТ-посты, включая суточные. Запрет
+  // на конкретный пост/смену выражается через матрицу (avoid_hard), а не через
+  // урезание allowedPosts. Так суточные доступны всем КТ, а ставит/не ставит
+  // в сутки решает только предпочтение в матрице.
+  const allowedPostsFor = (e: { modalities: string | null }): string[] => {
+    const mods = safeJson<string[]>(e.modalities, []);
+    return posts
+      .filter((p) => p.modality && mods.includes(p.modality))
+      .map((p) => p.id);
+  };
 
   let monthRecord = await prisma.month.findUnique({
     where: { year_month: { year, month } },
@@ -396,7 +408,7 @@ export async function POST(req: NextRequest) {
     // одной смены (24ч для суточников, иначе 12ч), пока есть хоть один доступный
     // день — иначе договорную ставку для него физически не закрыть.
     if (hasAvailableDay) {
-      const allowed = safeJson<string[]>(emp.allowedPosts, []);
+      const allowed = allowedPostsFor(emp);
       const allows24 = allowed.some((p) => posts24Ids.has(p));
       const shiftUnit = allows24 ? 24 : 12;
       if (employeeMaxHours[emp.name] < shiftUnit) employeeMaxHours[emp.name] = shiftUnit;
@@ -433,7 +445,7 @@ export async function POST(req: NextRequest) {
     const rawFixed = safeJson<unknown>(monthRow?.solverFixedSlots ?? "{}", {});
     const employeesForValidation = employees.map((e) => ({
       name: e.name,
-      allowedPosts: safeJson<string[]>(e.allowedPosts, []),
+      allowedPosts: allowedPostsFor(e),
     }));
     const fixedCheck = validateFixedSlots(
       rawFixed,
@@ -473,7 +485,7 @@ export async function POST(req: NextRequest) {
       return {
         name: e.name,
         rate: e.rate,
-        allowedPosts: safeJson(e.allowedPosts, []),
+        allowedPosts: allowedPostsFor(e),
         maxRate: eff.maxRate,
         targetRate: eff.targetRate,
         seniority: e.seniority,

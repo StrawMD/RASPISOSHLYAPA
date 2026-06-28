@@ -33,6 +33,12 @@ async function main() {
 
   const posts = await prisma.post.findMany({ orderBy: { sortOrder: "asc" } });
   const posts24Ids = new Set(posts.filter((p) => p.shiftHours === 24).map((p) => p.id));
+  // Допуски выводим из модальностей (как в генерации): КТ-врачу доступны все
+  // КТ-посты, включая суточные; запрет на сутки — только avoid_hard в матрице.
+  const allowedPostsFor = (e: { modalities: string | null }): string[] => {
+    const mods = safeJson<string[]>(e.modalities, []);
+    return posts.filter((p) => p.modality && mods.includes(p.modality)).map((p) => p.id);
+  };
   const employees = await prisma.employee.findMany();
 
   const monthRecord = await prisma.month.findUnique({
@@ -261,7 +267,7 @@ async function main() {
     }
     employeeFairHours[emp.name] = nh * fairRate * avail;
     if (hasAvailableDay) {
-      const allowed = safeJson<string[]>(emp.allowedPosts, []);
+      const allowed = allowedPostsFor(emp);
       const allows24 = allowed.some((p) => posts24Ids.has(p));
       const shiftUnit = allows24 ? 24 : 12;
       if (employeeMaxHours[emp.name] < shiftUnit) employeeMaxHours[emp.name] = shiftUnit;
@@ -273,7 +279,7 @@ async function main() {
   const solverWeights = weightsSetting ? safeJson<Record<string, number>>(weightsSetting.value, {}) : {};
 
   const rawFixed = safeJson<unknown>(monthRecord.solverFixedSlots ?? "{}", {});
-  const employeesForValidation = employees.map((e) => ({ name: e.name, allowedPosts: safeJson<string[]>(e.allowedPosts, []) }));
+  const employeesForValidation = employees.map((e) => ({ name: e.name, allowedPosts: allowedPostsFor(e) }));
   const fixedCheck = validateFixedSlots(rawFixed, year, month, posts.map((p) => ({ id: p.id, shiftHours: p.shiftHours })), employeesForValidation);
   if (!fixedCheck.ok) throw new Error("fixed slots invalid: " + fixedCheck.error);
   const fixedSlotsForSolver = Object.keys(fixedCheck.data).length > 0 ? fixedCheck.data : undefined;
@@ -290,7 +296,7 @@ async function main() {
       const t = computeTenure(e, year);
       const eff = effRates.get(e.name)!;
       return {
-        name: e.name, rate: e.rate, allowedPosts: safeJson(e.allowedPosts, []),
+        name: e.name, rate: e.rate, allowedPosts: allowedPostsFor(e),
         maxRate: eff.maxRate, targetRate: eff.targetRate, seniority: e.seniority,
         hospitalYears: t.hospitalYears, careerYears: t.careerYears, seniorityScore: t.score,
         consecutivePref: e.consecutivePref ?? "avoid", medicalRestriction: e.medicalRestriction ?? "none",

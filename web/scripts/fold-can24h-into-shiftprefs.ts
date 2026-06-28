@@ -30,10 +30,12 @@ function safeJson<T>(v: string | null | undefined, fallback: T): T {
 async function main() {
   const posts24 = await prisma.post.findMany({
     where: { shiftHours: 24 },
-    select: { id: true },
+    select: { id: true, modality: true },
   });
-  const ids24 = posts24.map((p) => p.id);
-  console.log("Суточные посты:", ids24.join(", ") || "(нет)");
+  console.log(
+    "Суточные посты:",
+    posts24.map((p) => `${p.id}(${p.modality})`).join(", ") || "(нет)",
+  );
 
   const employees = await prisma.employee.findMany({
     select: {
@@ -41,14 +43,18 @@ async function main() {
       name: true,
       can24h: true,
       medicalRestriction: true,
-      allowedPosts: true,
+      modalities: true,
       postShiftPrefs: true,
     },
   });
 
   let changed = 0;
   for (const e of employees) {
-    const allowed = new Set(safeJson<string[]>(e.allowedPosts, []));
+    // Допуск к посту определяется МОДАЛЬНОСТЬЮ (как теперь в солвере/матрице),
+    // а не сохранённым allowedPosts. Поэтому запреты с/н нужно проставить на
+    // всех суточных постах модальности сотрудника — иначе после перехода на
+    // «только матрица» бывшие can24h=false внезапно стали бы доступны для суток.
+    const mods = new Set(safeJson<string[]>(e.modalities, []));
     const psp = safeJson<Record<string, Record<string, string>>>(
       e.postShiftPrefs,
       {},
@@ -59,8 +65,9 @@ async function main() {
       !e.can24h || med === "no_night" || med === "day_only";
 
     let touched = false;
-    for (const pid of ids24) {
-      if (!allowed.has(pid)) continue; // нет допуска — переменных всё равно нет
+    for (const p of posts24) {
+      if (!p.modality || !mods.has(p.modality)) continue; // вне модальности
+      const pid = p.id;
       const cur = { ...(psp[pid] ?? {}) };
       if (banFull && cur.full !== HARD) {
         cur.full = HARD;
